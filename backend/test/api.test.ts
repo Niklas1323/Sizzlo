@@ -73,6 +73,7 @@ describe('profile API (demo user)', () => {
     assert.equal(status, 200);
     assert.equal(body.user.displayName, 'Alex');
     assert.equal(body.user.avatarUrl, null);
+    assert.equal(body.user.avatarPreset, 'hat-toss');
     assert.deepEqual(body.stats, { xp: 550, stars: { earned: 16, max: 60 }, levels: { completed: 6, total: 20 }, recipesCooked: 2 });
     assert.deepEqual(body.currentLevel, { level: 7, skill: 'Flip Master', recipe: 'Pancake Lab', chapter: { chapter: 2, title: 'Heat & Texture' } });
     assert.equal(body.streak.current, 5);
@@ -217,6 +218,25 @@ describe('editing the profile', () => {
     assert.ok(got.data.equals(JPEG));
     assert.deepEqual((await call('DELETE', '/api/me/avatar')).body, { avatarUrl: null });
     assert.equal((await download('/api/me/avatar')).status, 404);
+  });
+
+  test('avatar presets: one profile picture at a time', async () => {
+    const user = async () => (await call('GET', '/api/me/profile')).body.user;
+    const set = await call('PATCH', '/api/me/settings', { body: { avatarPreset: 'avocado' } });
+    assert.equal(set.body.avatarPreset, 'avocado');
+    assert.equal((await user()).avatarPreset, 'avocado');
+    const bad = await call('PATCH', '/api/me/settings', { body: { avatarPreset: 'pizza' } });
+    assert.deepEqual([bad.status, bad.body.error.code], [400, 'invalid_field']);
+
+    await upload('/api/me/avatar', PNG, 'image/png');
+    assert.deepEqual([(await user()).avatarUrl, (await user()).avatarPreset], ['/api/me/avatar', null]);
+
+    await call('PATCH', '/api/me/settings', { body: { avatarPreset: 'sunny-egg' } });
+    assert.deepEqual([(await user()).avatarUrl, (await user()).avatarPreset], [null, 'sunny-egg']);
+    assert.equal((await download('/api/me/avatar')).status, 404);
+
+    await call('PATCH', '/api/me/settings', { body: { avatarPreset: null } });
+    assert.equal((await user()).avatarPreset, null);
   });
 
   test('picking Holiday Saves needs manual mode, and switching keeps past saves', async () => {

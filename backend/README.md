@@ -13,7 +13,7 @@ including a profile picture.
 cd backend
 npm install        # dev tools only
 npm start          # http://localhost:8787, demo user "demo-alex"
-npm test           # 41 tests (rules + HTTP API)
+npm test           # 42 tests (rules + HTTP API)
 npm run typecheck
 ```
 
@@ -30,7 +30,7 @@ Environment: `PORT` (8787), `DATA_DIR` (`data`: database and photos),
 | Weekly streak | A week counts when the user cooked (or baked) a **Sizzlo recipe for real** that week. There is no free "I cooked" button and digital practice never counts. The current week can't break a streak until it is over. |
 | Cook for Real | Opens per recipe once all of its levels are done (e.g. Fluffy Pancakes after Levels 5–7). Recording a cook returns where to upload the photo. |
 | Recipe Book photos | One photo per cook, private. The Recipe Book shows the latest photo; the app keeps the recipe illustration as a small badge on it, or shows the illustration alone while there is no photo. JPEG, PNG or WebP, up to 5 MB, checked by content. |
-| Profile picture | Optional JPEG, PNG or WebP. Name, language, visibility and equipment are editable. |
+| Profile picture | Either an uploaded JPEG, PNG or WebP photo or one of 5 illustrated presets (`hat-toss`, `pancake-flip`, `happy-tomato`, `avocado`, `sunny-egg`). One at a time: uploading a photo clears the preset, picking a preset removes the photo. Name, language, visibility and equipment are editable. |
 | Holiday Saves | 4 per ISO year. A save protects a week without a project but never extends the streak. |
 | Skill Passport | Per skill: `new` → `understood` (Learn done) → `practiced` (Practice done) → `tried` (tried for real, self-reported). |
 | Cook dates | Up to 7 days back, never a future day. |
@@ -64,7 +64,7 @@ All `/api/me/*` routes need `X-User-Id`. Errors look like
 | GET | `/api/me/stats/xp?weeks=7` | XP per week for the statistics chart |
 | GET | `/api/me/achievements` | All achievements with progress |
 | GET | `/api/me/skill-passport` | All 20 skills with their evidence level |
-| GET / PATCH | `/api/me/settings` | `displayName`, `language` (`en`/`de`), `visibility` (`private`/`friends`), `timezone`, `holidaySaveMode`, `equipment[]` |
+| GET / PATCH | `/api/me/settings` | `displayName`, `language` (`en`/`de`), `visibility` (`private`/`friends`), `timezone`, `holidaySaveMode`, `avatarPreset` (a preset id or `null`), `equipment[]` |
 | PUT / GET / DELETE | `/api/me/avatar` | Profile picture: raw image body with its `Content-Type` |
 | GET | `/api/me/recipe-book` | All 8 recipes with `locked` / `ready` / `cooked`, times cooked, latest photo URL |
 | POST | `/api/me/recipes/:recipeId/cooked` | Cook for Real: `{ cookedOn?, note? }` → entry, `photoUploadUrl`, updated streak, new achievements |
@@ -81,7 +81,7 @@ All `/api/me/*` routes need `X-User-Id`. Errors look like
 
 ```json
 {
-  "user": { "id": "demo-alex", "displayName": "Alex", "initial": "A", "avatarUrl": null, "language": "en", "visibility": "private", "memberSince": "2026-08-24", "isDemo": true },
+  "user": { "id": "demo-alex", "displayName": "Alex", "initial": "A", "avatarUrl": null, "avatarPreset": "hat-toss", "language": "en", "visibility": "private", "memberSince": "2026-08-24", "isDemo": true },
   "stats": { "xp": 550, "stars": { "earned": 16, "max": 60 }, "levels": { "completed": 6, "total": 20 }, "recipesCooked": 2 },
   "currentLevel": { "level": 7, "skill": "Flip Master", "recipe": "Pancake Lab", "chapter": { "chapter": 2, "title": "Heat & Texture" } },
   "chapters": [{ "chapter": 1, "title": "Kitchen Foundations", "levels": { "from": 1, "to": 4, "completed": 4, "total": 4 }, "stars": { "earned": 11, "max": 12 }, "complete": true }],

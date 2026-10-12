@@ -1,4 +1,4 @@
-import type { HolidaySaveMode, Language, Rules, Visibility } from '../config.ts';
+import type { AvatarPreset, HolidaySaveMode, Language, Rules, Visibility } from '../config.ts';
 import { evaluateAchievements } from '../domain/achievements.ts';
 import { getChapter, getLevel, getRecipe, LEVEL_COUNT, PLANNED_RECIPES, RECIPES } from '../domain/curriculum.ts';
 import type { Recipe } from '../domain/curriculum.ts';
@@ -162,6 +162,7 @@ export class ProfileService {
         displayName: user.displayName,
         initial: user.displayName.trim().charAt(0).toUpperCase(),
         avatarUrl: user.avatarFile ? '/api/me/avatar' : null,
+        avatarPreset: user.avatarPreset,
         language: user.language,
         visibility: user.visibility,
         memberSince: user.createdAt.slice(0, 10),
@@ -193,6 +194,7 @@ export class ProfileService {
     return {
       displayName: user.displayName,
       avatarUrl: user.avatarFile ? '/api/me/avatar' : null,
+      avatarPreset: user.avatarPreset,
       language: user.language,
       visibility: user.visibility,
       timezone: user.timezone,
@@ -201,8 +203,13 @@ export class ProfileService {
     };
   }
 
-  updateSettings(user: User, patch: { displayName?: string; language?: Language; visibility?: Visibility; timezone?: string; holidaySaveMode?: HolidaySaveMode; equipment?: string[] }) {
+  updateSettings(user: User, patch: { displayName?: string; language?: Language; visibility?: Visibility; timezone?: string; holidaySaveMode?: HolidaySaveMode; avatarPreset?: AvatarPreset | null; equipment?: string[] }) {
     const { equipment, ...fields } = patch;
+    // One profile picture at a time: picking a preset replaces an uploaded photo.
+    if (fields.avatarPreset && user.avatarFile) {
+      this.media.remove(user.avatarFile);
+      this.repo.setAvatar(user.id, null, null);
+    }
     if (fields.holidaySaveMode === 'manual' && user.holidaySaveMode === 'auto') {
       // Keep the saves auto mode already spent, so switching modes never rewrites past weeks.
       for (const week of this.streak(user).result.weeks) {
@@ -218,6 +225,7 @@ export class ProfileService {
     if (user.avatarFile) this.media.remove(user.avatarFile);
     const file = this.media.save(`avatars`, user.id, image.type, image.data);
     this.repo.setAvatar(user.id, file, image.type);
+    if (user.avatarPreset) this.repo.updateUser(user.id, { avatarPreset: null });
     return { avatarUrl: '/api/me/avatar' };
   }
 

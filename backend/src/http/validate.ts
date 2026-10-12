@@ -43,6 +43,12 @@ export function optionalEnum<T extends string>(body: Body, key: string, allowed:
   return value as T;
 }
 
+/** Like optionalEnum, but an explicit null is kept so the field can be cleared. */
+export function nullableEnum<T extends string>(body: Body, key: string, allowed: readonly T[]): T | null | undefined {
+  if (body[key] === null) return null;
+  return optionalEnum(body, key, allowed);
+}
+
 export function requiredEnum<T extends string>(body: Body, key: string, allowed: readonly T[]): T {
   const value = optionalEnum(body, key, allowed);
   if (value === undefined) throw new HttpError(400, 'missing_field', `${key} is required.`);

@@ -28,6 +28,7 @@ export function seedDemoUser(repo: Repository, rules: Rules, now: Date): void {
     isDemo: true,
     createdAt: stamp(weeksAgo(7, 0)),
   });
+  repo.updateUser(DEMO_USER_ID, { avatarPreset: 'hat-toss' });
   repo.setEquipment(DEMO_USER_ID, ['hob', 'oven', 'pan', 'pot', 'knife', 'whisk']);
 
   const results: Array<[level: number, stars: StarResult, weeksBack: number]> = [

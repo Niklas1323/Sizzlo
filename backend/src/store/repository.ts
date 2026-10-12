@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import type { HolidaySaveMode, Language, Visibility } from '../config.ts';
+import type { AvatarPreset, HolidaySaveMode, Language, Visibility } from '../config.ts';
 import type { LocalDate } from '../domain/dates.ts';
 import type { LevelProgress } from '../domain/progress.ts';
 import { transaction } from './db.ts';
@@ -15,6 +15,7 @@ export interface User {
   isDemo: boolean;
   avatarFile: string | null;
   avatarType: string | null;
+  avatarPreset: AvatarPreset | null;
   createdAt: string;
 }
 
@@ -35,6 +36,7 @@ export interface UserPatch {
   visibility?: Visibility;
   timezone?: string;
   holidaySaveMode?: HolidaySaveMode;
+  avatarPreset?: AvatarPreset | null;
 }
 
 type Row = Record<string, unknown>;
@@ -49,6 +51,7 @@ const toUser = (r: Row): User => ({
   isDemo: Number(r.is_demo) === 1,
   avatarFile: r.avatar_file == null ? null : String(r.avatar_file),
   avatarType: r.avatar_type == null ? null : String(r.avatar_type),
+  avatarPreset: r.avatar_preset == null ? null : (String(r.avatar_preset) as AvatarPreset),
   createdAt: String(r.created_at),
 });
 
@@ -101,11 +104,12 @@ export class Repository {
       visibility: 'visibility',
       timezone: 'timezone',
       holidaySaveMode: 'holiday_save_mode',
+      avatarPreset: 'avatar_preset',
     };
     const keys = (Object.keys(patch) as (keyof UserPatch)[]).filter((k) => patch[k] !== undefined);
     if (keys.length > 0) {
       const sql = `UPDATE users SET ${keys.map((k) => `${columns[k]} = ?`).join(', ')} WHERE id = ?`;
-      this.db.prepare(sql).run(...keys.map((k) => patch[k] as string), id);
+      this.db.prepare(sql).run(...keys.map((k) => patch[k] as string | null), id);
     }
     return this.getUser(id) as User;
   }

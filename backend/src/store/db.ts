@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
   is_demo INTEGER NOT NULL DEFAULT 0,
   avatar_file TEXT,
   avatar_type TEXT,
+  avatar_preset TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -84,7 +85,14 @@ export function openDatabase(path: string): DatabaseSync {
   db.exec('PRAGMA foreign_keys = ON;');
   if (path !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+/** Brings databases created by an earlier version up to the current schema. */
+function migrate(db: DatabaseSync): void {
+  const columns = (db.prepare('PRAGMA table_info(users)').all() as { name: string }[]).map((c) => c.name);
+  if (!columns.includes('avatar_preset')) db.exec('ALTER TABLE users ADD COLUMN avatar_preset TEXT');
 }
 
 export function transaction<T>(db: DatabaseSync, fn: () => T): T {

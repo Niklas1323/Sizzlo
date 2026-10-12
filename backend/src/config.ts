@@ -47,3 +47,7 @@ export type Language = (typeof LANGUAGES)[number];
 
 export const VISIBILITIES = ['private', 'friends'] as const;
 export type Visibility = (typeof VISIBILITIES)[number];
+
+/** Illustrated profile pictures to pick instead of uploading a photo. */
+export const AVATAR_PRESETS = ['hat-toss', 'pancake-flip', 'happy-tomato', 'avocado', 'sunny-egg'] as const;
+export type AvatarPreset = (typeof AVATAR_PRESETS)[number];

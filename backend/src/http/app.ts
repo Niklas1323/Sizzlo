@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import { EQUIPMENT, LANGUAGES, VISIBILITIES } from '../config.ts';
+import { AVATAR_PRESETS, EQUIPMENT, LANGUAGES, VISIBILITIES } from '../config.ts';
 import { CHAPTERS, LEVELS, PLANNED_RECIPES, RECIPES } from '../domain/curriculum.ts';
 import { isValidTimeZone } from '../domain/dates.ts';
 import type { Image, ProfileService } from '../service/profileService.ts';
@@ -12,6 +12,7 @@ import { HttpError } from './errors.ts';
 import {
   asObject,
   intParam,
+  nullableEnum,
   optionalDate,
   optionalEnum,
   optionalString,
@@ -122,6 +123,7 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*' }: AppOptio
         visibility: optionalEnum(body, 'visibility', VISIBILITIES),
         timezone: timezoneField(body),
         holidaySaveMode: optionalEnum(body, 'holidaySaveMode', ['auto', 'manual'] as const),
+        avatarPreset: nullableEnum(body, 'avatarPreset', AVATAR_PRESETS),
         equipment: optionalStringList(body, 'equipment', EQUIPMENT),
       });
     }),
