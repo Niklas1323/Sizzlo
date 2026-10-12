@@ -3,7 +3,7 @@ import { addDays, isoWeek, mondayOf, weekLabel } from './dates.ts';
 import type { LocalDate } from './dates.ts';
 
 /**
- * done   – at least one real cooking or baking project that week
+ * done   – cooked (or baked) at least one recipe for the first time that week
  * saved  – no project, but a Holiday Save protected the streak
  * missed – no project and no save: the streak restarts
  * open   – the current week, still time to cook
@@ -12,7 +12,7 @@ export type WeekStatus = 'done' | 'saved' | 'missed' | 'open';
 
 export interface StreakInput {
   today: LocalDate;
-  /** Dates of real cooking or baking projects. Future dates are ignored. */
+  /** Dates of streak-counting projects (see streakProjectDates). Future dates are ignored. */
   projectDates: readonly LocalDate[];
   /** Mondays of weeks the user picked a Holiday Save for (manual mode). */
   manualSaveWeeks: readonly LocalDate[];
@@ -39,6 +39,19 @@ export interface StreakResult {
   /** Every week from the first project up to this week, oldest first. */
   weeks: StreakWeek[];
   holidaySaves: { perYear: number; usedThisYear: number; left: number; mode: HolidaySaveMode };
+}
+
+/**
+ * Only the first time a user cooks a recipe counts towards the streak. Cooking a recipe
+ * again is always allowed and logged, it just doesn't keep the streak going.
+ */
+export function streakProjectDates(cooks: readonly { cookedOn: LocalDate; recipeId: string }[]): LocalDate[] {
+  const first = new Map<string, LocalDate>();
+  for (const cook of cooks) {
+    const seen = first.get(cook.recipeId);
+    if (!seen || cook.cookedOn < seen) first.set(cook.recipeId, cook.cookedOn);
+  }
+  return [...first.values()];
 }
 
 export function computeStreak(input: StreakInput): StreakResult {

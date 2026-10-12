@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import { AVATAR_PRESETS, EQUIPMENT, LANGUAGES, VISIBILITIES } from '../config.ts';
+import { AVATAR_PRESETS, DISPLAY_NAME_MAX, EQUIPMENT, LANGUAGES, VISIBILITIES } from '../config.ts';
 import { CHAPTERS, LEVELS, PLANNED_RECIPES, RECIPES } from '../domain/curriculum.ts';
 import { isValidTimeZone } from '../domain/dates.ts';
 import type { Image, ProfileService } from '../service/profileService.ts';
@@ -102,7 +102,7 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*' }: AppOptio
     // Development sign-up. Real authentication replaces this (see README).
     route('POST', '/api/users', async (ctx) => {
       const body = await ctx.json();
-      const user = service.createUser(requiredString(body, 'displayName', { max: 40 }), timezoneField(body));
+      const user = service.createUser(requiredString(body, 'displayName', { max: DISPLAY_NAME_MAX }), timezoneField(body));
       return reply(201, { id: user.id, displayName: user.displayName });
     }),
 
@@ -118,7 +118,7 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*' }: AppOptio
     route('PATCH', '/api/me/settings', async (ctx) => {
       const body = await ctx.json();
       return service.updateSettings(ctx.user(), {
-        displayName: optionalString(body, 'displayName', { min: 1, max: 40 }),
+        displayName: optionalString(body, 'displayName', { min: 1, max: DISPLAY_NAME_MAX }),
         language: optionalEnum(body, 'language', LANGUAGES),
         visibility: optionalEnum(body, 'visibility', VISIBILITIES),
         timezone: timezoneField(body),

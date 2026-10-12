@@ -27,7 +27,7 @@ Environment: `PORT` (8787), `DATA_DIR` (`data`: database and photos),
 | Stars | 1–3 per level. The best result is kept forever and never drops. |
 | XP | 50 / 75 / 100 for 1 / 2 / 3 stars (proposal, in `src/config.ts`). A replay only earns the difference to the previous best, so XP can't be farmed. |
 | Levels | The original 20-level plan, 4 chapters. Levels unlock in order. Levels 14–20 are flagged `plus`; there is no payment or subscription logic. |
-| Weekly streak | A week counts when the user cooked (or baked) a **Sizzlo recipe for real** that week. There is no free "I cooked" button and digital practice never counts. The current week can't break a streak until it is over. |
+| Weekly streak | A week counts when the user cooked (or baked) a **new Sizzlo recipe for real** that week: only the first cook of each recipe counts. Cooking a recipe again is always allowed and logged, it just earns no streak credit (`countsForStreak` tells the app which case it is). There is no free "I cooked" button and digital practice never counts. The current week can't break a streak until it is over. |
 | Cook for Real | Opens per recipe once all of its levels are done (e.g. Fluffy Pancakes after Levels 5–7). Recording a cook returns where to upload the photo. |
 | Recipe Book photos | One photo per cook, private. The Recipe Book shows the latest photo; the app keeps the recipe illustration as a small badge on it, or shows the illustration alone while there is no photo. JPEG, PNG or WebP, up to 5 MB, checked by content. |
 | Profile picture | Either an uploaded JPEG, PNG or WebP photo or one of 12 illustrated presets (`hat-toss`, `pancake-flip`, `happy-tomato`, `avocado`, `sunny-egg`, `spoony`, `taco-time`, `berry-muffin`, `broccoli`, `strawberry`, `pizza-slice`, `lemon`). One at a time: uploading a photo clears the preset, picking a preset removes the photo. Name, language, visibility and equipment are editable. |
@@ -64,7 +64,7 @@ All `/api/me/*` routes need `X-User-Id`. Errors look like
 | GET | `/api/me/stats/xp?weeks=7` | XP per week for the statistics chart |
 | GET | `/api/me/achievements` | All achievements with progress |
 | GET | `/api/me/skill-passport` | All 20 skills with their evidence level |
-| GET / PATCH | `/api/me/settings` | `displayName`, `language` (`en`/`de`), `visibility` (`private`/`friends`), `timezone`, `holidaySaveMode`, `avatarPreset` (a preset id or `null`), `equipment[]` |
+| GET / PATCH | `/api/me/settings` | `displayName` (1–13 characters), `language` (`en`/`de`), `visibility` (`private`/`friends`), `timezone`, `holidaySaveMode`, `avatarPreset` (a preset id or `null`), `equipment[]` |
 | PUT / GET / DELETE | `/api/me/avatar` | Profile picture: raw image body with its `Content-Type` |
 | GET | `/api/me/recipe-book` | All 8 recipes with `locked` / `ready` / `cooked`, times cooked, latest photo URL |
 | POST | `/api/me/recipes/:recipeId/cooked` | Cook for Real: `{ cookedOn?, note? }` → entry, `photoUploadUrl`, updated streak, new achievements |
@@ -86,14 +86,14 @@ All `/api/me/*` routes need `X-User-Id`. Errors look like
   "currentLevel": { "level": 7, "skill": "Flip Master", "recipe": "Pancake Lab", "chapter": { "chapter": 2, "title": "Heat & Texture" } },
   "chapters": [{ "chapter": 1, "title": "Kitchen Foundations", "levels": { "from": 1, "to": 4, "completed": 4, "total": 4 }, "stars": { "earned": 11, "max": 12 }, "complete": true }],
   "streak": {
-    "current": 5, "best": 5, "atRisk": true,
+    "current": 2, "best": 2, "atRisk": true,
     "thisWeek": { "weekStart": "2026-10-12", "status": "open", "projects": 0 },
-    "message": "Cook a recipe this week to make it 6.",
-    "holidaySaves": { "perYear": 4, "usedThisYear": 1, "left": 3, "mode": "auto" },
-    "weeks": [{ "label": "W35", "status": "none" }, { "label": "W36", "status": "done" }, { "label": "W37", "status": "saved" }]
+    "message": "Cook a new recipe this week to make it 3.",
+    "holidaySaves": { "perYear": 4, "usedThisYear": 0, "left": 4, "mode": "auto" },
+    "weeks": [{ "label": "W39", "status": "none" }, { "label": "W40", "status": "done" }, { "label": "W41", "status": "done" }]
   },
   "skillPassport": { "understood": 6, "practiced": 6, "triedForReal": 2, "total": 20 },
-  "achievements": { "earned": 6, "total": 12, "latest": [] }
+  "achievements": { "earned": 5, "total": 12, "latest": [] }
 }
 ```
 

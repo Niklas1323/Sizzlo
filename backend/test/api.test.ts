@@ -76,10 +76,10 @@ describe('profile API (demo user)', () => {
     assert.equal(body.user.avatarPreset, 'hat-toss');
     assert.deepEqual(body.stats, { xp: 550, stars: { earned: 16, max: 60 }, levels: { completed: 6, total: 20 }, recipesCooked: 2 });
     assert.deepEqual(body.currentLevel, { level: 7, skill: 'Flip Master', recipe: 'Pancake Lab', chapter: { chapter: 2, title: 'Heat & Texture' } });
-    assert.equal(body.streak.current, 5);
-    assert.equal(body.streak.message, 'Cook a recipe this week to make it 6.');
-    assert.deepEqual(body.streak.holidaySaves, { perYear: 4, usedThisYear: 1, left: 3, mode: 'auto' });
-    assert.deepEqual([body.achievements.earned, body.achievements.total], [6, 12]);
+    assert.equal(body.streak.current, 2);
+    assert.equal(body.streak.message, 'Cook a new recipe this week to make it 3.');
+    assert.deepEqual(body.streak.holidaySaves, { perYear: 4, usedThisYear: 0, left: 4, mode: 'auto' });
+    assert.deepEqual([body.achievements.earned, body.achievements.total], [5, 12]);
     assert.deepEqual(body.skillPassport, { understood: 6, practiced: 6, triedForReal: 2, total: 20 });
   });
 
@@ -87,7 +87,7 @@ describe('profile API (demo user)', () => {
     const { body } = await call('GET', '/api/me/streak?weeks=8');
     assert.deepEqual(
       body.weeks.map((w: { label: string; status: string }) => `${w.label}:${w.status}`),
-      ['W35:none', 'W36:done', 'W37:saved', 'W38:done', 'W39:done', 'W40:done', 'W41:done', 'W42:open'],
+      ['W35:none', 'W36:none', 'W37:none', 'W38:none', 'W39:none', 'W40:done', 'W41:done', 'W42:open'],
     );
     assert.equal((await call('GET', '/api/me/streak?weeks=99')).status, 400);
   });
@@ -115,7 +115,8 @@ describe('recipe book', () => {
     const byId = Object.fromEntries(body.recipes.map((r: { id: string }) => [r.id, r]));
     assert.equal(body.recipes.length, 8);
     assert.deepEqual([byId['pizza-twists'].status, byId['pizza-twists'].timesCooked], ['cooked', 2]);
-    assert.deepEqual([byId['egg-master-omelette'].status, byId['egg-master-omelette'].timesCooked], ['cooked', 3]);
+    assert.deepEqual([byId['egg-master-omelette'].status, byId['egg-master-omelette'].timesCooked], ['cooked', 1]);
+    assert.deepEqual([byId['pizza-twists'].countsForStreak, byId['fluffy-pancakes'].countsForStreak], [false, true]);
     assert.equal(byId['fluffy-pancakes'].status, 'locked');
     assert.deepEqual(byId['fluffy-pancakes'].levels, { from: 5, to: 7, done: 2, total: 3 });
     assert.equal(byId['pizza-twists'].photoUrl, null);
@@ -156,7 +157,8 @@ describe('levels, then Cook for Real with a photo', () => {
     assert.equal(res.body.entry.recipeName, 'Fluffy Pancakes');
     assert.equal(res.body.entry.cookedOn, '2026-10-12');
     assert.equal(res.body.entry.photoUrl, null);
-    assert.equal(res.body.streak.current, 6);
+    assert.equal(res.body.countsForStreak, true);
+    assert.equal(res.body.streak.current, 3);
     assert.equal(res.body.streak.thisWeek.status, 'done');
 
     const entryId = res.body.entry.id;
@@ -176,6 +178,14 @@ describe('levels, then Cook for Real with a photo', () => {
 
     assert.equal((await call('DELETE', `/api/me/cooked/${entryId}/photo`)).body.photoUrl, null);
     assert.equal((await download(`/api/me/cooked/${entryId}/photo`)).status, 404);
+  });
+
+  test('cooking a recipe again is logged but earns no streak credit', async () => {
+    const again = await call('POST', '/api/me/recipes/pizza-twists/cooked', { body: {} });
+    assert.equal(again.status, 201);
+    assert.equal(again.body.countsForStreak, false);
+    assert.deepEqual([again.body.streak.current, again.body.streak.thisWeek.projects], [3, 1]);
+    assert.equal((await call('DELETE', `/api/me/cooked/${again.body.entry.id}`)).status, 204);
   });
 
   test('photo uploads must really be images and not too large', async () => {
@@ -202,6 +212,8 @@ describe('levels, then Cook for Real with a photo', () => {
 describe('editing the profile', () => {
   test('name and settings', async () => {
     assert.equal((await call('PATCH', '/api/me/settings', { body: { displayName: '' } })).status, 400);
+    assert.equal((await call('PATCH', '/api/me/settings', { body: { displayName: 'Alexandra Rose' } })).status, 400);
+    assert.equal((await call('PATCH', '/api/me/settings', { body: { displayName: 'Alexandra Ros' } })).status, 200);
     assert.equal((await call('PATCH', '/api/me/settings', { body: { language: 'fr' } })).status, 400);
     const res = await call('PATCH', '/api/me/settings', { body: { displayName: 'Alexa', language: 'de', equipment: ['pan', 'oven'] } });
     assert.equal(res.status, 200);
@@ -239,15 +251,15 @@ describe('editing the profile', () => {
     assert.equal((await user()).avatarPreset, null);
   });
 
-  test('picking Holiday Saves needs manual mode, and switching keeps past saves', async () => {
+  test('picking Holiday Saves needs manual mode', async () => {
     assert.equal((await call('POST', '/api/me/holiday-saves', { body: { weekStart: '2026-10-19' } })).body.error.code, 'auto_mode');
     await call('PATCH', '/api/me/settings', { body: { holidaySaveMode: 'manual' } });
-    assert.equal((await call('GET', '/api/me/streak')).body.current, 6);
+    assert.equal((await call('GET', '/api/me/streak')).body.current, 3);
     assert.equal((await call('POST', '/api/me/holiday-saves', { body: { weekStart: '2026-10-21' } })).body.error.code, 'not_monday');
     const picked = await call('POST', '/api/me/holiday-saves', { body: { weekStart: '2026-10-19' } });
     assert.equal(picked.status, 201);
-    assert.equal(picked.body.holidaySaves.left, 2);
-    assert.equal((await call('DELETE', '/api/me/holiday-saves/2026-10-19')).body.holidaySaves.left, 3);
+    assert.equal(picked.body.holidaySaves.left, 3);
+    assert.equal((await call('DELETE', '/api/me/holiday-saves/2026-10-19')).body.holidaySaves.left, 4);
   });
 });
 
@@ -259,7 +271,7 @@ describe('a brand-new user', () => {
     assert.equal(body.stats.xp, 0);
     assert.equal(body.currentLevel.level, 1);
     assert.equal(body.streak.current, 0);
-    assert.equal(body.streak.message, 'Cook a Sizzlo recipe this week to start a streak.');
+    assert.equal(body.streak.message, 'Cook a new Sizzlo recipe this week to start a streak.');
     assert.equal(body.achievements.earned, 0);
     const book = await call('GET', '/api/me/recipe-book', { user: created.body.id });
     assert.ok(book.body.recipes.every((r: { status: string }) => r.status === 'locked'));

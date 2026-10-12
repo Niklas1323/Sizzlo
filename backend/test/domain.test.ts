@@ -6,7 +6,7 @@ import { LEVELS, MAX_STARS, RECIPES } from '../src/domain/curriculum.ts';
 import { isLocalDate, isoWeek, mondayOf, todayIn } from '../src/domain/dates.ts';
 import { currentLevel, isUnlocked, skillPassport } from '../src/domain/progress.ts';
 import type { LevelProgress } from '../src/domain/progress.ts';
-import { computeStreak, recentWeeks } from '../src/domain/streak.ts';
+import { computeStreak, recentWeeks, streakProjectDates } from '../src/domain/streak.ts';
 import type { StreakInput } from '../src/domain/streak.ts';
 import { scoreAttempt } from '../src/domain/xp.ts';
 
@@ -72,6 +72,17 @@ const streak = (over: Partial<StreakInput>) =>
 const DEMO_PROJECTS = ['2026-09-02', '2026-09-16', '2026-09-23', '2026-09-30', '2026-10-07'];
 
 describe('weekly cooking streak', () => {
+  test('only the first cook of each recipe counts', () => {
+    const dates = streakProjectDates([
+      { recipeId: 'pizza-twists', cookedOn: '2026-09-30' },
+      { recipeId: 'pizza-twists', cookedOn: '2026-09-23' },
+      { recipeId: 'egg-master-omelette', cookedOn: '2026-10-07' },
+      { recipeId: 'pizza-twists', cookedOn: '2026-10-08' },
+    ]);
+    assert.deepEqual(dates.sort(), ['2026-09-23', '2026-10-07']);
+    assert.equal(streak({ today: '2026-10-08', projectDates: dates, mode: 'manual' }).current, 1);
+  });
+
   test('no projects yet means no streak', () => {
     const s = streak({});
     assert.equal(s.current, 0);

@@ -5,7 +5,7 @@ import type { Recipe } from '../domain/curriculum.ts';
 import { addDays, daysBetween, isoWeek, mondayOf, todayIn, weekLabel } from '../domain/dates.ts';
 import type { LocalDate } from '../domain/dates.ts';
 import { chapterSummaries, currentLevel, isCompleted, isUnlocked, recipeUnlocked, skillPassport, totals } from '../domain/progress.ts';
-import { computeStreak, recentWeeks } from '../domain/streak.ts';
+import { computeStreak, recentWeeks, streakProjectDates } from '../domain/streak.ts';
 import { scoreAttempt } from '../domain/xp.ts';
 import type { StarResult } from '../domain/xp.ts';
 import type { ImageType, MediaStore } from '../store/media.ts';
@@ -79,7 +79,7 @@ export class ProfileService {
       today,
       result: computeStreak({
         today,
-        projectDates: this.repo.cookedDays(user.id).map((d) => d.cookedOn),
+        projectDates: streakProjectDates(this.repo.cookedDays(user.id)),
         manualSaveWeeks: this.repo.holidaySaveWeeks(user.id),
         mode: user.holidaySaveMode,
         savesPerYear: this.rules.holidaySavesPerYear,
@@ -310,6 +310,8 @@ export class ProfileService {
         recipeStatus: r.recipeStatus,
         status: mine.length > 0 ? ('cooked' as const) : unlocked ? ('ready' as const) : ('locked' as const),
         timesCooked: mine.length,
+        /** Cooking it now keeps the streak going: only a recipe's first cook counts. */
+        countsForStreak: mine.length === 0,
         lastCookedOn: mine[0]?.cookedOn ?? null,
         /** Latest photo the user took of this dish. The app shows the illustration as a badge on it, or alone when null. */
         photoUrl: withPhoto ? photoUrl(withPhoto.id) : null,
@@ -336,9 +338,12 @@ export class ProfileService {
     if (daysBetween(cookedOn, today) > this.rules.cookLogBackdateDays) {
       throw new ServiceError(422, 'too_old', `A cook can be recorded up to ${this.rules.cookLogBackdateDays} days back.`);
     }
+    const earlier = this.repo.cookedDays(user.id).some((d) => d.recipeId === recipe.id && d.cookedOn <= cookedOn);
     const entry = this.repo.addCooked(user.id, { recipeId: recipe.id, cookedOn, note: input.note ?? null, createdAt: this.stamp() });
     return {
       entry: this.entryView(entry),
+      /** False when the recipe was cooked before: logged, but no streak credit. */
+      countsForStreak: !earlier,
       photoUploadUrl: photoUrl(entry.id),
       streak: this.streakView(user, 8),
       newAchievements: this.syncAchievements(user),
@@ -426,8 +431,8 @@ export class ProfileService {
 
 /** Short, encouraging line for the streak card. Never shaming. */
 export function streakMessage(current: number, thisWeek: 'done' | 'saved' | 'open'): string {
-  if (current === 0) return thisWeek === 'done' ? 'Week 1 done. Your streak has started!' : 'Cook a Sizzlo recipe this week to start a streak.';
+  if (current === 0) return thisWeek === 'done' ? 'Week 1 done. Your streak has started!' : 'Cook a new Sizzlo recipe this week to start a streak.';
   if (thisWeek === 'done') return `${current} weeks in a row. This week is covered.`;
   if (thisWeek === 'saved') return 'This week is covered by a Holiday Save.';
-  return `Cook a recipe this week to make it ${current + 1}.`;
+  return `Cook a new recipe this week to make it ${current + 1}.`;
 }

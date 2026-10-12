@@ -48,6 +48,9 @@ export type Language = (typeof LANGUAGES)[number];
 export const VISIBILITIES = ['private', 'friends'] as const;
 export type Visibility = (typeof VISIBILITIES)[number];
 
+/** Longest display name, so it fits the profile card and leaderboards. */
+export const DISPLAY_NAME_MAX = 13;
+
 /** Illustrated profile pictures to pick instead of uploading a photo. */
 export const AVATAR_PRESETS = [
   'hat-toss', 'pancake-flip', 'happy-tomato', 'avocado', 'sunny-egg', 'spoony',

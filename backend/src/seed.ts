@@ -8,8 +8,9 @@ export const DEMO_USER_ID = 'demo-alex';
 
 /**
  * The demo profile shown in the designs: Levels 1–6 done (16 stars, 550 XP),
- * Level 7 next, a 5-week cooking streak (Pizza Twists and Omelette cooked for
- * real) with one Holiday Save used.
+ * Level 7 next, a 2-week cooking streak (Pizza Twists, then the Omelette cooked
+ * for the first time) and a second Pizza Twists cook that doesn't count.
+ * Finishing Level 7 unlocks the pancakes: a new recipe to make it 3.
  * Dates are relative to "now" so the demo always looks current.
  */
 export function seedDemoUser(repo: Repository, rules: Rules, now: Date): void {
@@ -48,16 +49,14 @@ export function seedDemoUser(repo: Repository, rules: Rules, now: Date): void {
   repo.setTriedForReal(DEMO_USER_ID, 1, stamp(weeksAgo(6, 3)));
   repo.setTriedForReal(DEMO_USER_ID, 3, stamp(weeksAgo(4, 3)));
 
-  // Cook for Real once a week with the recipes unlocked so far, except a holiday week five weeks back.
-  const cooks: Array<[weeksBack: number, recipeId: string]> = [
-    [6, 'pizza-twists'],
-    [4, 'egg-master-omelette'],
-    [3, 'pizza-twists'],
-    [2, 'egg-master-omelette'],
-    [1, 'egg-master-omelette'],
+  // Cook for Real: each unlocked recipe once, then Pizza Twists again (no streak credit for repeats).
+  const cooks: Array<[weeksBack: number, day: number, recipeId: string]> = [
+    [2, 2, 'pizza-twists'],
+    [1, 2, 'egg-master-omelette'],
+    [1, 5, 'pizza-twists'],
   ];
-  for (const [back, recipeId] of cooks) {
-    const day = weeksAgo(back, 2);
+  for (const [back, weekday, recipeId] of cooks) {
+    const day = weeksAgo(back, weekday);
     repo.addCooked(DEMO_USER_ID, { recipeId, cookedOn: day, note: null, createdAt: stamp(day) });
   }
 }
