@@ -231,8 +231,8 @@ describe('editing the profile', () => {
     await upload('/api/me/avatar', PNG, 'image/png');
     assert.deepEqual([(await user()).avatarUrl, (await user()).avatarPreset], ['/api/me/avatar', null]);
 
-    await call('PATCH', '/api/me/settings', { body: { avatarPreset: 'sunny-egg' } });
-    assert.deepEqual([(await user()).avatarUrl, (await user()).avatarPreset], [null, 'sunny-egg']);
+    await call('PATCH', '/api/me/settings', { body: { avatarPreset: 'pizza-slice' } });
+    assert.deepEqual([(await user()).avatarUrl, (await user()).avatarPreset], [null, 'pizza-slice']);
     assert.equal((await download('/api/me/avatar')).status, 404);
 
     await call('PATCH', '/api/me/settings', { body: { avatarPreset: null } });

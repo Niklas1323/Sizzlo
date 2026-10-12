@@ -49,5 +49,8 @@ export const VISIBILITIES = ['private', 'friends'] as const;
 export type Visibility = (typeof VISIBILITIES)[number];
 
 /** Illustrated profile pictures to pick instead of uploading a photo. */
-export const AVATAR_PRESETS = ['hat-toss', 'pancake-flip', 'happy-tomato', 'avocado', 'sunny-egg'] as const;
+export const AVATAR_PRESETS = [
+  'hat-toss', 'pancake-flip', 'happy-tomato', 'avocado', 'sunny-egg', 'spoony',
+  'taco-time', 'berry-muffin', 'broccoli', 'strawberry', 'pizza-slice', 'lemon',
+] as const;
 export type AvatarPreset = (typeof AVATAR_PRESETS)[number];

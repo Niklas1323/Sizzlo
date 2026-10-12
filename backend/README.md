@@ -30,7 +30,7 @@ Environment: `PORT` (8787), `DATA_DIR` (`data`: database and photos),
 | Weekly streak | A week counts when the user cooked (or baked) a **Sizzlo recipe for real** that week. There is no free "I cooked" button and digital practice never counts. The current week can't break a streak until it is over. |
 | Cook for Real | Opens per recipe once all of its levels are done (e.g. Fluffy Pancakes after Levels 5–7). Recording a cook returns where to upload the photo. |
 | Recipe Book photos | One photo per cook, private. The Recipe Book shows the latest photo; the app keeps the recipe illustration as a small badge on it, or shows the illustration alone while there is no photo. JPEG, PNG or WebP, up to 5 MB, checked by content. |
-| Profile picture | Either an uploaded JPEG, PNG or WebP photo or one of 5 illustrated presets (`hat-toss`, `pancake-flip`, `happy-tomato`, `avocado`, `sunny-egg`). One at a time: uploading a photo clears the preset, picking a preset removes the photo. Name, language, visibility and equipment are editable. |
+| Profile picture | Either an uploaded JPEG, PNG or WebP photo or one of 12 illustrated presets (`hat-toss`, `pancake-flip`, `happy-tomato`, `avocado`, `sunny-egg`, `spoony`, `taco-time`, `berry-muffin`, `broccoli`, `strawberry`, `pizza-slice`, `lemon`). One at a time: uploading a photo clears the preset, picking a preset removes the photo. Name, language, visibility and equipment are editable. |
 | Holiday Saves | 4 per ISO year. A save protects a week without a project but never extends the streak. |
 | Skill Passport | Per skill: `new` → `understood` (Learn done) → `practiced` (Practice done) → `tried` (tried for real, self-reported). |
 | Cook dates | Up to 7 days back, never a future day. |
