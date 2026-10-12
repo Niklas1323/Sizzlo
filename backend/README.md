@@ -2,7 +2,8 @@
 
 Backend for the **Profile** area of Sizzlo: XP, best stars, level progress,
 the weekly cooking streak with Holiday Saves, achievements, the Skill Passport,
-real cooking logs and profile settings.
+Cook for Real with recipe photos for the Recipe Book, and profile settings
+including a profile picture.
 
 - Node.js ≥ 22.18, TypeScript run directly by Node (no build step)
 - SQLite through the built-in `node:sqlite` module
@@ -12,12 +13,12 @@ real cooking logs and profile settings.
 cd backend
 npm install        # dev tools only
 npm start          # http://localhost:8787, demo user "demo-alex"
-npm test           # 37 tests (rules + HTTP API)
+npm test           # 41 tests (rules + HTTP API)
 npm run typecheck
 ```
 
-Environment: `PORT` (8787), `DB_PATH` (`data/sizzlo.db`), `SEED_DEMO` (`true`),
-`CORS_ORIGIN` (`*`).
+Environment: `PORT` (8787), `DATA_DIR` (`data`: database and photos),
+`SEED_DEMO` (`true`), `CORS_ORIGIN` (`*`).
 
 ## Rules it enforces
 
@@ -26,10 +27,13 @@ Environment: `PORT` (8787), `DB_PATH` (`data/sizzlo.db`), `SEED_DEMO` (`true`),
 | Stars | 1–3 per level. The best result is kept forever and never drops. |
 | XP | 50 / 75 / 100 for 1 / 2 / 3 stars (proposal, in `src/config.ts`). A replay only earns the difference to the previous best, so XP can't be farmed. |
 | Levels | The original 20-level plan, 4 chapters. Levels unlock in order. Levels 14–20 are flagged `plus`; there is no payment or subscription logic. |
-| Weekly streak | A week counts when at least one real **cooking or baking** project is logged. Digital practice never counts. The current week can't break a streak until it is over. |
+| Weekly streak | A week counts when the user cooked (or baked) a **Sizzlo recipe for real** that week. There is no free "I cooked" button and digital practice never counts. The current week can't break a streak until it is over. |
+| Cook for Real | Opens per recipe once all of its levels are done (e.g. Fluffy Pancakes after Levels 5–7). Recording a cook returns where to upload the photo. |
+| Recipe Book photos | One photo per cook, private. The Recipe Book shows the latest photo; the app keeps the recipe illustration as a small badge on it, or shows the illustration alone while there is no photo. JPEG, PNG or WebP, up to 5 MB, checked by content. |
+| Profile picture | Optional JPEG, PNG or WebP. Name, language, visibility and equipment are editable. |
 | Holiday Saves | 4 per ISO year. A save protects a week without a project but never extends the streak. |
 | Skill Passport | Per skill: `new` → `understood` (Learn done) → `practiced` (Practice done) → `tried` (tried for real, self-reported). |
-| Cook logs | Private by default. Can be logged up to 7 days back, never for a future day. No photo upload yet. |
+| Cook dates | Up to 7 days back, never a future day. |
 
 ### Decisions on open questions (easy to change)
 
@@ -61,32 +65,35 @@ All `/api/me/*` routes need `X-User-Id`. Errors look like
 | GET | `/api/me/achievements` | All achievements with progress |
 | GET | `/api/me/skill-passport` | All 20 skills with their evidence level |
 | GET / PATCH | `/api/me/settings` | `displayName`, `language` (`en`/`de`), `visibility` (`private`/`friends`), `timezone`, `holidaySaveMode`, `equipment[]` |
-| GET | `/api/me/cook-logs?limit=20` | Real cooking/baking projects, newest first |
-| POST | `/api/me/cook-logs` | `{ kind: "cook" \| "bake", title, note?, recipeId?, cookedOn? }` → log, updated streak, new achievements |
-| DELETE | `/api/me/cook-logs/:id` | Remove a project |
+| PUT / GET / DELETE | `/api/me/avatar` | Profile picture: raw image body with its `Content-Type` |
+| GET | `/api/me/recipe-book` | All 8 recipes with `locked` / `ready` / `cooked`, times cooked, latest photo URL |
+| POST | `/api/me/recipes/:recipeId/cooked` | Cook for Real: `{ cookedOn?, note? }` → entry, `photoUploadUrl`, updated streak, new achievements |
+| GET | `/api/me/cooked?limit=20` | Everything cooked for real, newest first |
+| DELETE | `/api/me/cooked/:id` | Remove a cook (and its photo) |
+| PUT / GET / DELETE | `/api/me/cooked/:id/photo` | Photo of that cook: raw image body with its `Content-Type` |
 | POST | `/api/me/holiday-saves` | Manual mode: `{ weekStart: "YYYY-MM-DD" (a Monday) }` |
 | DELETE | `/api/me/holiday-saves/:weekStart` | Give a picked save back |
 | POST | `/api/me/levels/:level/learn` | Learn part finished |
-| POST | `/api/me/levels/:level/attempts` | Practice result `{ stars: 1 \| 2 \| 3 }` → XP awarded, best stars, new achievements |
+| POST | `/api/me/levels/:level/attempts` | Practice result `{ stars: 1 \| 2 \| 3 }` → XP awarded, best stars, new achievements, `recipeReady` when this level opened Cook for Real |
 | PUT / DELETE | `/api/me/skills/:level/tried-for-real` | Self-reported "tried for real" |
 
 ### `GET /api/me/profile` (demo user)
 
 ```json
 {
-  "user": { "id": "demo-alex", "displayName": "Alex", "initial": "A", "language": "en", "visibility": "private", "memberSince": "2026-08-24", "isDemo": true },
-  "stats": { "xp": 550, "stars": { "earned": 16, "max": 60 }, "levels": { "completed": 6, "total": 20 } },
+  "user": { "id": "demo-alex", "displayName": "Alex", "initial": "A", "avatarUrl": null, "language": "en", "visibility": "private", "memberSince": "2026-08-24", "isDemo": true },
+  "stats": { "xp": 550, "stars": { "earned": 16, "max": 60 }, "levels": { "completed": 6, "total": 20 }, "recipesCooked": 2 },
   "currentLevel": { "level": 7, "skill": "Flip Master", "recipe": "Pancake Lab", "chapter": { "chapter": 2, "title": "Heat & Texture" } },
   "chapters": [{ "chapter": 1, "title": "Kitchen Foundations", "levels": { "from": 1, "to": 4, "completed": 4, "total": 4 }, "stars": { "earned": 11, "max": 12 }, "complete": true }],
   "streak": {
     "current": 5, "best": 5, "atRisk": true,
     "thisWeek": { "weekStart": "2026-10-12", "status": "open", "projects": 0 },
-    "message": "Cook or bake one thing this week to make it 6.",
+    "message": "Cook a recipe this week to make it 6.",
     "holidaySaves": { "perYear": 4, "usedThisYear": 1, "left": 3, "mode": "auto" },
     "weeks": [{ "label": "W35", "status": "none" }, { "label": "W36", "status": "done" }, { "label": "W37", "status": "saved" }]
   },
-  "achievements": { "earned": 6, "total": 12, "latest": [] },
-  "skillPassport": { "understood": 6, "practiced": 6, "triedForReal": 2, "total": 20 }
+  "skillPassport": { "understood": 6, "practiced": 6, "triedForReal": 2, "total": 20 },
+  "achievements": { "earned": 6, "total": 12, "latest": [] }
 }
 ```
 
@@ -99,7 +106,7 @@ src/
   config.ts              rules and allowed values
   domain/                pure logic, no I/O: dates, curriculum, xp, streak, progress, achievements
   service/profileService.ts   use cases (profile, streak, logging, settings)
-  store/                 SQLite schema and repository
+  store/                 SQLite schema, repository, photo storage (local disk)
   http/                  HTTP server, routing, validation
   seed.ts                demo profile used by the designs
 test/                    domain + API tests (node:test)

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { DEFAULT_RULES } from '../src/config.ts';
 import { evaluateAchievements } from '../src/domain/achievements.ts';
-import { LEVELS, MAX_STARS } from '../src/domain/curriculum.ts';
+import { LEVELS, MAX_STARS, RECIPES } from '../src/domain/curriculum.ts';
 import { isLocalDate, isoWeek, mondayOf, todayIn } from '../src/domain/dates.ts';
 import { currentLevel, isUnlocked, skillPassport } from '../src/domain/progress.ts';
 import type { LevelProgress } from '../src/domain/progress.ts';
@@ -43,6 +43,11 @@ describe('curriculum', () => {
       Array.from({ length: 13 }, (_, i) => i + 1),
     );
     assert.equal(LEVELS[13].recipe, 'Mac & Cheese Master');
+  });
+
+  test('every level belongs to exactly one real recipe', () => {
+    const covered = RECIPES.flatMap((r) => [...r.levels]).sort((a, b) => a - b);
+    assert.deepEqual(covered, LEVELS.map((l) => l.level));
   });
 });
 

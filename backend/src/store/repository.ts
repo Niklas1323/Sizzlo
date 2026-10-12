@@ -13,17 +13,19 @@ export interface User {
   timezone: string;
   holidaySaveMode: HolidaySaveMode;
   isDemo: boolean;
+  avatarFile: string | null;
+  avatarType: string | null;
   createdAt: string;
 }
 
-export interface CookLog {
+export interface CookedEntry {
   id: string;
-  kind: 'cook' | 'bake';
-  title: string;
-  note: string | null;
-  recipeId: string | null;
+  recipeId: string;
   cookedOn: LocalDate;
-  visibility: 'private';
+  note: string | null;
+  photoFile: string | null;
+  photoType: string | null;
+  photoAddedAt: string | null;
   createdAt: string;
 }
 
@@ -45,17 +47,21 @@ const toUser = (r: Row): User => ({
   timezone: String(r.timezone),
   holidaySaveMode: r.holiday_save_mode as HolidaySaveMode,
   isDemo: Number(r.is_demo) === 1,
+  avatarFile: r.avatar_file == null ? null : String(r.avatar_file),
+  avatarType: r.avatar_type == null ? null : String(r.avatar_type),
   createdAt: String(r.created_at),
 });
 
-const toCookLog = (r: Row): CookLog => ({
+const optional = (v: unknown) => (v == null ? null : String(v));
+
+const toCooked = (r: Row): CookedEntry => ({
   id: String(r.id),
-  kind: r.kind as 'cook' | 'bake',
-  title: String(r.title),
-  note: r.note == null ? null : String(r.note),
-  recipeId: r.recipe_id == null ? null : String(r.recipe_id),
+  recipeId: String(r.recipe_id),
   cookedOn: String(r.cooked_on),
-  visibility: 'private',
+  note: optional(r.note),
+  photoFile: optional(r.photo_file),
+  photoType: optional(r.photo_type),
+  photoAddedAt: optional(r.photo_added_at),
   createdAt: String(r.created_at),
 });
 
@@ -167,29 +173,45 @@ export class Repository {
     return rows.map((r) => ({ day: String(r.day), xp: Number(r.xp) }));
   }
 
-  addCookLog(userId: string, log: Omit<CookLog, 'id' | 'visibility'>): CookLog {
-    const id = randomUUID();
-    this.db
-      .prepare('INSERT INTO cook_logs (id, user_id, kind, title, note, recipe_id, cooked_on, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, userId, log.kind, log.title, log.note, log.recipeId, log.cookedOn, log.createdAt);
-    return { ...log, id, visibility: 'private' };
+  setAvatar(userId: string, file: string | null, type: string | null): void {
+    this.db.prepare('UPDATE users SET avatar_file = ?, avatar_type = ? WHERE id = ?').run(file, type, userId);
   }
 
-  deleteCookLog(userId: string, id: string): boolean {
-    const result = this.db.prepare('DELETE FROM cook_logs WHERE user_id = ? AND id = ?').run(userId, id);
+  addCooked(userId: string, entry: { recipeId: string; cookedOn: LocalDate; note: string | null; createdAt: string }): CookedEntry {
+    const id = randomUUID();
+    this.db
+      .prepare('INSERT INTO cooked_recipes (id, user_id, recipe_id, cooked_on, note, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, userId, entry.recipeId, entry.cookedOn, entry.note, entry.createdAt);
+    return this.getCooked(userId, id) as CookedEntry;
+  }
+
+  getCooked(userId: string, id: string): CookedEntry | undefined {
+    const row = this.db.prepare('SELECT * FROM cooked_recipes WHERE user_id = ? AND id = ?').get(userId, id) as Row | undefined;
+    return row ? toCooked(row) : undefined;
+  }
+
+  listCooked(userId: string, limit = 1000): CookedEntry[] {
+    const rows = this.db
+      .prepare('SELECT * FROM cooked_recipes WHERE user_id = ? ORDER BY cooked_on DESC, created_at DESC LIMIT ?')
+      .all(userId, limit) as Row[];
+    return rows.map(toCooked);
+  }
+
+  deleteCooked(userId: string, id: string): boolean {
+    const result = this.db.prepare('DELETE FROM cooked_recipes WHERE user_id = ? AND id = ?').run(userId, id);
     return Number(result.changes) > 0;
   }
 
-  listCookLogs(userId: string, limit: number): CookLog[] {
-    const rows = this.db
-      .prepare('SELECT * FROM cook_logs WHERE user_id = ? ORDER BY cooked_on DESC, created_at DESC LIMIT ?')
-      .all(userId, limit) as Row[];
-    return rows.map(toCookLog);
+  setCookedPhoto(userId: string, id: string, photo: { file: string; type: string; at: string } | null): void {
+    this.db
+      .prepare('UPDATE cooked_recipes SET photo_file = ?, photo_type = ?, photo_added_at = ? WHERE user_id = ? AND id = ?')
+      .run(photo?.file ?? null, photo?.type ?? null, photo?.at ?? null, userId, id);
   }
 
-  projects(userId: string): { cookedOn: LocalDate; kind: 'cook' | 'bake' }[] {
-    const rows = this.db.prepare('SELECT cooked_on, kind FROM cook_logs WHERE user_id = ?').all(userId) as Row[];
-    return rows.map((r) => ({ cookedOn: String(r.cooked_on), kind: r.kind as 'cook' | 'bake' }));
+  /** Dates and recipes of everything the user really cooked; the streak and achievements read this. */
+  cookedDays(userId: string): { cookedOn: LocalDate; recipeId: string }[] {
+    const rows = this.db.prepare('SELECT cooked_on, recipe_id FROM cooked_recipes WHERE user_id = ?').all(userId) as Row[];
+    return rows.map((r) => ({ cookedOn: String(r.cooked_on), recipeId: String(r.recipe_id) }));
   }
 
   holidaySaveWeeks(userId: string): LocalDate[] {

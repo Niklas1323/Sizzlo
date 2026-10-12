@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS users (
   timezone TEXT NOT NULL,
   holiday_save_mode TEXT NOT NULL CHECK (holiday_save_mode IN ('auto', 'manual')),
   is_demo INTEGER NOT NULL DEFAULT 0,
+  avatar_file TEXT,
+  avatar_type TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -44,19 +46,20 @@ CREATE TABLE IF NOT EXISTS level_attempts (
 );
 CREATE INDEX IF NOT EXISTS level_attempts_user_day ON level_attempts(user_id, played_on);
 
--- Real cooking or baking projects. They feed the weekly streak. Private by default.
-CREATE TABLE IF NOT EXISTS cook_logs (
+-- A Sizzlo recipe the user really cooked ("Cook for Real"). Feeds the weekly
+-- streak and the Recipe Book. The photo is private and optional per entry.
+CREATE TABLE IF NOT EXISTS cooked_recipes (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL CHECK (kind IN ('cook', 'bake')),
-  title TEXT NOT NULL,
-  note TEXT,
-  recipe_id TEXT,
+  recipe_id TEXT NOT NULL,
   cooked_on TEXT NOT NULL,
-  visibility TEXT NOT NULL DEFAULT 'private',
+  note TEXT,
+  photo_file TEXT,
+  photo_type TEXT,
+  photo_added_at TEXT,
   created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS cook_logs_user_day ON cook_logs(user_id, cooked_on);
+CREATE INDEX IF NOT EXISTS cooked_recipes_user_day ON cooked_recipes(user_id, cooked_on);
 
 -- Holiday Saves the user picked themselves (manual mode). Auto mode needs no rows.
 CREATE TABLE IF NOT EXISTS holiday_saves (

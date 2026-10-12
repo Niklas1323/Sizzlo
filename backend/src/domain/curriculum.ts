@@ -49,6 +49,35 @@ export const LEVELS: readonly Level[] = [
   { level: 20, chapter: 4, skill: 'Kitchen Multitasking', focus: 'Coordination and priorities', recipe: 'Crispy Wrap Challenge', access: 'plus', recipeStatus: 'proposed' },
 ];
 
+export interface Recipe {
+  id: string;
+  name: string;
+  /** Practice project name from the level plan. */
+  practice: string;
+  /** Levels that teach the skills for this recipe. Cook for Real opens when all of them are done. */
+  levels: readonly number[];
+  /** Baking counts for the streak exactly like cooking; the kind only feeds achievements. */
+  kind: 'cook' | 'bake';
+  access: Access;
+  recipeStatus: 'confirmed' | 'proposed';
+}
+
+/** The real recipes behind the practice projects ("Cook for Real"). */
+export const RECIPES: readonly Recipe[] = [
+  { id: 'pizza-twists', name: 'Pizza Twists', practice: 'Pizza Twists', levels: [1, 2], kind: 'bake', access: 'free', recipeStatus: 'confirmed' },
+  { id: 'egg-master-omelette', name: 'Egg Master Omelette', practice: 'Egg Master', levels: [3, 4], kind: 'cook', access: 'free', recipeStatus: 'confirmed' },
+  { id: 'fluffy-pancakes', name: 'Fluffy Pancakes', practice: 'Pancake Lab', levels: [5, 6, 7], kind: 'cook', access: 'free', recipeStatus: 'confirmed' },
+  { id: 'smash-burger-tacos', name: 'Smash Burger Tacos', practice: 'Smash Burger Tacos', levels: [8, 9], kind: 'cook', access: 'free', recipeStatus: 'confirmed' },
+  { id: 'blueberry-vanilla-muffins', name: 'Blueberry Vanilla Muffins', practice: 'Blueberry Vanilla Muffins', levels: [10, 11, 12, 13], kind: 'bake', access: 'free', recipeStatus: 'confirmed' },
+  { id: 'mac-and-cheese', name: 'Mac & Cheese', practice: 'Mac & Cheese Master', levels: [14, 15, 16], kind: 'cook', access: 'plus', recipeStatus: 'confirmed' },
+  { id: 'rainbow-crunch-bowl', name: 'Rainbow Crunch Bowl', practice: 'Rainbow Crunch Bowl', levels: [17, 18], kind: 'cook', access: 'plus', recipeStatus: 'proposed' },
+  { id: 'crispy-wrap', name: 'Crispy Wrap', practice: 'Crispy Wrap Challenge', levels: [19, 20], kind: 'cook', access: 'plus', recipeStatus: 'proposed' },
+];
+
+export function getRecipe(id: string): Recipe | undefined {
+  return RECIPES.find((r) => r.id === id);
+}
+
 /** Requested recipes whose place on the path is still open. Never given a level number here. */
 export const PLANNED_RECIPES = [
   { recipe: 'French Toast Roll-Ups', access: 'free' as Access, status: 'planned', placement: null },

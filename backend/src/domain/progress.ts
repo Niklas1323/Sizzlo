@@ -28,6 +28,11 @@ export function isUnlocked(progress: ProgressMap, level: number): boolean {
   return level === 1 || isCompleted(progress, level - 1);
 }
 
+/** Cook for Real opens once every level of the recipe has at least one star. */
+export function recipeUnlocked(progress: ProgressMap, recipe: { levels: readonly number[] }): boolean {
+  return recipe.levels.every((n) => isCompleted(progress, n));
+}
+
 export function currentLevel(progress: ProgressMap): Level | null {
   return LEVELS.find((l) => !isCompleted(progress, l.level)) ?? null;
 }

@@ -8,7 +8,8 @@ export const DEMO_USER_ID = 'demo-alex';
 
 /**
  * The demo profile shown in the designs: Levels 1–6 done (16 stars, 550 XP),
- * Level 7 next, a 5-week cooking streak with one Holiday Save used.
+ * Level 7 next, a 5-week cooking streak (Pizza Twists and Omelette cooked for
+ * real) with one Holiday Save used.
  * Dates are relative to "now" so the demo always looks current.
  */
 export function seedDemoUser(repo: Repository, rules: Rules, now: Date): void {
@@ -46,16 +47,16 @@ export function seedDemoUser(repo: Repository, rules: Rules, now: Date): void {
   repo.setTriedForReal(DEMO_USER_ID, 1, stamp(weeksAgo(6, 3)));
   repo.setTriedForReal(DEMO_USER_ID, 3, stamp(weeksAgo(4, 3)));
 
-  // One project per week for six weeks, except a holiday week four weeks back.
-  const projects: Array<[weeksBack: number, kind: 'cook' | 'bake', title: string]> = [
-    [6, 'cook', 'Pizza Twists'],
-    [4, 'bake', 'Banana bread'],
-    [3, 'cook', 'Veggie omelette'],
-    [2, 'cook', 'Tomato pasta'],
-    [1, 'cook', 'Cheesy omelette'],
+  // Cook for Real once a week with the recipes unlocked so far, except a holiday week five weeks back.
+  const cooks: Array<[weeksBack: number, recipeId: string]> = [
+    [6, 'pizza-twists'],
+    [4, 'egg-master-omelette'],
+    [3, 'pizza-twists'],
+    [2, 'egg-master-omelette'],
+    [1, 'egg-master-omelette'],
   ];
-  for (const [back, kind, title] of projects) {
+  for (const [back, recipeId] of cooks) {
     const day = weeksAgo(back, 2);
-    repo.addCookLog(DEMO_USER_ID, { kind, title, note: null, recipeId: null, cookedOn: day, createdAt: stamp(day) });
+    repo.addCooked(DEMO_USER_ID, { recipeId, cookedOn: day, note: null, createdAt: stamp(day) });
   }
 }

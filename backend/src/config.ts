@@ -11,8 +11,10 @@ export interface Rules {
   holidaySavesPerYear: number;
   /** Default for new users. "auto" spends a save on a missed week, "manual" only on weeks the user picked. */
   defaultHolidaySaveMode: HolidaySaveMode;
-  /** How many days back a real cooking project may be logged. */
+  /** How many days back a real cook may be recorded. */
   cookLogBackdateDays: number;
+  /** Largest accepted photo upload (recipe photos and profile pictures). */
+  maxPhotoBytes: number;
   defaultTimezone: string;
 }
 
@@ -21,6 +23,7 @@ export const DEFAULT_RULES: Rules = {
   holidaySavesPerYear: 4,
   defaultHolidaySaveMode: 'auto',
   cookLogBackdateDays: 7,
+  maxPhotoBytes: 5 * 1024 * 1024,
   defaultTimezone: 'Europe/Zurich',
 };
 
