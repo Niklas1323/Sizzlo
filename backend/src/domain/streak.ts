@@ -1,10 +1,9 @@
-import type { HolidaySaveMode } from '../config.ts';
 import { addDays, isoWeek, mondayOf, weekLabel } from './dates.ts';
 import type { LocalDate } from './dates.ts';
 
 /**
  * done   – cooked (or baked) at least one recipe for the first time that week
- * saved  – no project, but a Holiday Save protected the streak
+ * saved  – no project, but a Holiday Save protected the streak (spent automatically)
  * missed – no project and no save: the streak restarts
  * open   – the current week, still time to cook
  */
@@ -14,9 +13,6 @@ export interface StreakInput {
   today: LocalDate;
   /** Dates of streak-counting projects (see streakProjectDates). Future dates are ignored. */
   projectDates: readonly LocalDate[];
-  /** Mondays of weeks the user picked a Holiday Save for (manual mode). */
-  manualSaveWeeks: readonly LocalDate[];
-  mode: HolidaySaveMode;
   savesPerYear: number;
 }
 
@@ -33,12 +29,13 @@ export interface StreakResult {
   /** Consecutive cooking weeks, ending this week if it is done, otherwise last week. */
   current: number;
   best: number;
-  thisWeek: { weekStart: LocalDate; status: 'done' | 'saved' | 'open'; projects: number };
+  /** The current week is never saved: it only counts as missed once it is over. */
+  thisWeek: { weekStart: LocalDate; status: 'done' | 'open'; projects: number };
   /** True when the user has a streak and has not cooked yet this week. */
   atRisk: boolean;
   /** Every week from the first project up to this week, oldest first. */
   weeks: StreakWeek[];
-  holidaySaves: { perYear: number; usedThisYear: number; left: number; mode: HolidaySaveMode };
+  holidaySaves: { perYear: number; usedThisYear: number; left: number };
 }
 
 /**
@@ -62,7 +59,6 @@ export function computeStreak(input: StreakInput): StreakResult {
     const monday = mondayOf(date);
     perWeek.set(monday, (perWeek.get(monday) ?? 0) + 1);
   }
-  const manual = new Set(input.manualSaveWeeks.map(mondayOf));
   const usedByYear = new Map<number, number>();
   const savesLeftIn = (year: number) => input.savesPerYear - (usedByYear.get(year) ?? 0);
   const spendSave = (year: number) => usedByYear.set(year, (usedByYear.get(year) ?? 0) + 1);
@@ -80,12 +76,10 @@ export function computeStreak(input: StreakInput): StreakResult {
       if (projects > 0) {
         status = 'done';
         current += 1;
-      } else if (manual.has(monday) && savesLeftIn(year) > 0) {
-        status = 'saved';
-        spendSave(year);
       } else if (monday === thisMonday) {
         status = 'open';
-      } else if (input.mode === 'auto' && savesLeftIn(year) > 0) {
+      } else if (savesLeftIn(year) > 0) {
+        // A missed week spends a save while the year still has one; the user never has to pick it.
         status = 'saved';
         spendSave(year);
       } else {
@@ -97,19 +91,13 @@ export function computeStreak(input: StreakInput): StreakResult {
     }
   }
 
-  const thisYear = isoWeek(input.today).year;
-  // Saves the user already picked for later weeks this year are spoken for too.
-  for (const monday of manual) {
-    if (monday > thisMonday && isoWeek(monday).year === thisYear && savesLeftIn(thisYear) > 0) spendSave(thisYear);
-  }
-
   const last = weeks[weeks.length - 1];
   const thisWeek =
     last && last.weekStart === thisMonday
-      ? { weekStart: thisMonday, status: last.status as 'done' | 'saved' | 'open', projects: last.projects }
+      ? { weekStart: thisMonday, status: last.status as 'done' | 'open', projects: last.projects }
       : { weekStart: thisMonday, status: 'open' as const, projects: 0 };
 
-  const usedThisYear = usedByYear.get(thisYear) ?? 0;
+  const usedThisYear = usedByYear.get(isoWeek(input.today).year) ?? 0;
   return {
     current,
     best,
@@ -120,7 +108,6 @@ export function computeStreak(input: StreakInput): StreakResult {
       perYear: input.savesPerYear,
       usedThisYear,
       left: Math.max(0, input.savesPerYear - usedThisYear),
-      mode: input.mode,
     },
   };
 }

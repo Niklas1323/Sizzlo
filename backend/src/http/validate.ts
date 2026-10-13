@@ -55,16 +55,17 @@ export function requiredEnum<T extends string>(body: Body, key: string, allowed:
   return value;
 }
 
+export function optionalBoolean(body: Body, key: string): boolean | undefined {
+  const value = body[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'boolean') throw new HttpError(400, 'invalid_field', `${key} must be true or false.`);
+  return value;
+}
+
 export function optionalDate(body: Body, key: string): LocalDate | undefined {
   const value = body[key];
   if (value === undefined || value === null) return undefined;
   if (!isLocalDate(value)) throw new HttpError(400, 'invalid_field', `${key} must be a date like 2026-10-12.`);
-  return value;
-}
-
-export function requiredDate(body: Body, key: string): LocalDate {
-  const value = optionalDate(body, key);
-  if (value === undefined) throw new HttpError(400, 'missing_field', `${key} is required.`);
   return value;
 }
 

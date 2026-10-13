@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import type { AvatarPreset, HolidaySaveMode, Language, Visibility } from '../config.ts';
+import type { AvatarPreset, Language, Units } from '../config.ts';
 import type { LocalDate } from '../domain/dates.ts';
 import type { LevelProgress } from '../domain/progress.ts';
 import { transaction } from './db.ts';
@@ -9,9 +9,10 @@ export interface User {
   id: string;
   displayName: string;
   language: Language;
-  visibility: Visibility;
   timezone: string;
-  holidaySaveMode: HolidaySaveMode;
+  units: Units;
+  sound: boolean;
+  vibration: boolean;
   isDemo: boolean;
   avatarFile: string | null;
   avatarType: string | null;
@@ -33,9 +34,10 @@ export interface CookedEntry {
 export interface UserPatch {
   displayName?: string;
   language?: Language;
-  visibility?: Visibility;
   timezone?: string;
-  holidaySaveMode?: HolidaySaveMode;
+  units?: Units;
+  sound?: boolean;
+  vibration?: boolean;
   avatarPreset?: AvatarPreset | null;
 }
 
@@ -45,9 +47,10 @@ const toUser = (r: Row): User => ({
   id: String(r.id),
   displayName: String(r.display_name),
   language: r.language as Language,
-  visibility: r.visibility as Visibility,
   timezone: String(r.timezone),
-  holidaySaveMode: r.holiday_save_mode as HolidaySaveMode,
+  units: r.units as Units,
+  sound: Number(r.sound) === 1,
+  vibration: Number(r.vibration) === 1,
   isDemo: Number(r.is_demo) === 1,
   avatarFile: r.avatar_file == null ? null : String(r.avatar_file),
   avatarType: r.avatar_type == null ? null : String(r.avatar_type),
@@ -70,12 +73,15 @@ const toCooked = (r: Row): CookedEntry => ({
 
 const toProgress = (r: Row): LevelProgress => ({
   level: Number(r.level),
-  learnCompletedAt: r.learn_completed_at == null ? null : String(r.learn_completed_at),
+  learnCompletedAt: optional(r.learn_completed_at),
   bestStars: Number(r.best_stars),
   attempts: Number(r.attempts),
-  firstCompletedAt: r.first_completed_at == null ? null : String(r.first_completed_at),
-  triedForRealAt: r.tried_for_real_at == null ? null : String(r.tried_for_real_at),
+  cookedAt: optional(r.cooked_at),
+  skippedAt: optional(r.skipped_at),
 });
+
+/** Why XP was awarded: the kind of level that earned it. */
+export type XpReason = 'learn' | 'practice' | 'cook';
 
 export class Repository {
   private readonly db: DatabaseSync;
@@ -84,11 +90,11 @@ export class Repository {
     this.db = db;
   }
 
-  createUser(input: { id?: string; displayName: string; timezone: string; holidaySaveMode: HolidaySaveMode; isDemo?: boolean; createdAt: string }): User {
+  createUser(input: { id?: string; displayName: string; timezone: string; isDemo?: boolean; createdAt: string }): User {
     const id = input.id ?? randomUUID();
     this.db
-      .prepare('INSERT INTO users (id, display_name, timezone, holiday_save_mode, is_demo, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, input.displayName, input.timezone, input.holidaySaveMode, input.isDemo ? 1 : 0, input.createdAt);
+      .prepare('INSERT INTO users (id, display_name, timezone, is_demo, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(id, input.displayName, input.timezone, input.isDemo ? 1 : 0, input.createdAt);
     return this.getUser(id) as User;
   }
 
@@ -101,15 +107,18 @@ export class Repository {
     const columns: Record<keyof UserPatch, string> = {
       displayName: 'display_name',
       language: 'language',
-      visibility: 'visibility',
       timezone: 'timezone',
-      holidaySaveMode: 'holiday_save_mode',
+      units: 'units',
+      sound: 'sound',
+      vibration: 'vibration',
       avatarPreset: 'avatar_preset',
     };
+    // SQLite has no booleans: sound and vibration are stored as 1 or 0.
+    const value = (v: UserPatch[keyof UserPatch]) => (typeof v === 'boolean' ? (v ? 1 : 0) : (v ?? null));
     const keys = (Object.keys(patch) as (keyof UserPatch)[]).filter((k) => patch[k] !== undefined);
     if (keys.length > 0) {
       const sql = `UPDATE users SET ${keys.map((k) => `${columns[k]} = ?`).join(', ')} WHERE id = ?`;
-      this.db.prepare(sql).run(...keys.map((k) => patch[k] as string | null), id);
+      this.db.prepare(sql).run(...keys.map((k) => value(patch[k])), id);
     }
     return this.getUser(id) as User;
   }
@@ -132,47 +141,65 @@ export class Repository {
     return new Map(rows.map((r) => [Number(r.level), toProgress(r)]));
   }
 
-  markLearnCompleted(userId: string, level: number, at: string): void {
-    this.db
-      .prepare(
-        `INSERT INTO level_progress (user_id, level, learn_completed_at) VALUES (?, ?, ?)
-         ON CONFLICT (user_id, level) DO UPDATE SET learn_completed_at = COALESCE(learn_completed_at, excluded.learn_completed_at)`,
-      )
-      .run(userId, level, at);
+  /** Marks a Learn level done; the first time only, also books its XP. */
+  completeLearn(userId: string, l: { level: number; xp: number; on: LocalDate; at: string }): void {
+    transaction(this.db, () => {
+      this.db
+        .prepare(
+          `INSERT INTO level_progress (user_id, level, learn_completed_at) VALUES (?, ?, ?)
+           ON CONFLICT (user_id, level) DO UPDATE SET learn_completed_at = COALESCE(learn_completed_at, excluded.learn_completed_at)`,
+        )
+        .run(userId, l.level, l.at);
+      this.awardXp(userId, { level: l.level, reason: 'learn', xp: l.xp, on: l.on, at: l.at });
+    });
   }
 
   recordAttempt(userId: string, a: { level: number; stars: number; xpAwarded: number; bestStars: number; playedOn: LocalDate; at: string }): void {
     transaction(this.db, () => {
       this.db
-        .prepare('INSERT INTO level_attempts (user_id, level, stars, xp_awarded, played_on, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(userId, a.level, a.stars, a.xpAwarded, a.playedOn, a.at);
-      // Finishing Practice also means the Learn part was seen.
+        .prepare('INSERT INTO level_attempts (user_id, level, stars, played_on, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(userId, a.level, a.stars, a.playedOn, a.at);
       this.db
         .prepare(
-          `INSERT INTO level_progress (user_id, level, learn_completed_at, best_stars, attempts, first_completed_at)
-           VALUES (?, ?, ?, ?, 1, ?)
-           ON CONFLICT (user_id, level) DO UPDATE SET
-             best_stars = MAX(best_stars, excluded.best_stars),
-             attempts = attempts + 1,
-             learn_completed_at = COALESCE(learn_completed_at, excluded.learn_completed_at),
-             first_completed_at = COALESCE(first_completed_at, excluded.first_completed_at)`,
+          `INSERT INTO level_progress (user_id, level, best_stars, attempts) VALUES (?, ?, ?, 1)
+           ON CONFLICT (user_id, level) DO UPDATE SET best_stars = MAX(best_stars, excluded.best_stars), attempts = attempts + 1`,
         )
-        .run(userId, a.level, a.at, a.bestStars, a.at);
+        .run(userId, a.level, a.bestStars);
+      this.awardXp(userId, { level: a.level, reason: 'practice', xp: a.xpAwarded, on: a.playedOn, at: a.at });
     });
   }
 
-  setTriedForReal(userId: string, level: number, at: string | null): void {
-    this.db.prepare('UPDATE level_progress SET tried_for_real_at = ? WHERE user_id = ? AND level = ?').run(at, userId, level);
+  /** Skips a Cook level. The first skip is kept; cooking later still completes the level. */
+  skipLevel(userId: string, level: number, at: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO level_progress (user_id, level, skipped_at) VALUES (?, ?, ?)
+         ON CONFLICT (user_id, level) DO UPDATE SET skipped_at = COALESCE(skipped_at, excluded.skipped_at)`,
+      )
+      .run(userId, level, at);
+  }
+
+  /** Every skill a real cook marked as tried: skill id → when it was first tried. */
+  triedSkills(userId: string): Map<string, string> {
+    const rows = this.db.prepare('SELECT skill_id, tried_at FROM skills_tried WHERE user_id = ?').all(userId) as Row[];
+    return new Map(rows.map((r) => [String(r.skill_id), String(r.tried_at)]));
+  }
+
+  private awardXp(userId: string, x: { level: number; reason: XpReason; xp: number; on: LocalDate; at: string }): void {
+    if (x.xp <= 0) return;
+    this.db
+      .prepare('INSERT INTO xp_awards (user_id, level, reason, xp, earned_on, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(userId, x.level, x.reason, x.xp, x.on, x.at);
   }
 
   totalXp(userId: string): number {
-    const row = this.db.prepare('SELECT COALESCE(SUM(xp_awarded), 0) AS xp FROM level_attempts WHERE user_id = ?').get(userId) as Row;
+    const row = this.db.prepare('SELECT COALESCE(SUM(xp), 0) AS xp FROM xp_awards WHERE user_id = ?').get(userId) as Row;
     return Number(row.xp);
   }
 
   xpByDay(userId: string, from: LocalDate, to: LocalDate): { day: LocalDate; xp: number }[] {
     const rows = this.db
-      .prepare('SELECT played_on AS day, SUM(xp_awarded) AS xp FROM level_attempts WHERE user_id = ? AND played_on BETWEEN ? AND ? GROUP BY played_on')
+      .prepare('SELECT earned_on AS day, SUM(xp) AS xp FROM xp_awards WHERE user_id = ? AND earned_on BETWEEN ? AND ? GROUP BY earned_on')
       .all(userId, from, to) as Row[];
     return rows.map((r) => ({ day: String(r.day), xp: Number(r.xp) }));
   }
@@ -181,11 +208,29 @@ export class Repository {
     this.db.prepare('UPDATE users SET avatar_file = ?, avatar_type = ? WHERE id = ?').run(file, type, userId);
   }
 
-  addCooked(userId: string, entry: { recipeId: string; cookedOn: LocalDate; note: string | null; createdAt: string }): CookedEntry {
+  /**
+   * A real cook: the Recipe Book entry, the recipe's Cook level done, the skills
+   * it marked as tried and, for the recipe's first cook, its XP.
+   */
+  recordCook(
+    userId: string,
+    c: { recipeId: string; level: number; cookedOn: LocalDate; note: string | null; skillIds: readonly string[]; xp: number; createdAt: string },
+  ): CookedEntry {
     const id = randomUUID();
-    this.db
-      .prepare('INSERT INTO cooked_recipes (id, user_id, recipe_id, cooked_on, note, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, userId, entry.recipeId, entry.cookedOn, entry.note, entry.createdAt);
+    transaction(this.db, () => {
+      this.db
+        .prepare('INSERT INTO cooked_recipes (id, user_id, recipe_id, cooked_on, note, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(id, userId, c.recipeId, c.cookedOn, c.note, c.createdAt);
+      this.db
+        .prepare(
+          `INSERT INTO level_progress (user_id, level, cooked_at) VALUES (?, ?, ?)
+           ON CONFLICT (user_id, level) DO UPDATE SET cooked_at = COALESCE(cooked_at, excluded.cooked_at)`,
+        )
+        .run(userId, c.level, c.createdAt);
+      const tried = this.db.prepare('INSERT OR IGNORE INTO skills_tried (user_id, skill_id, tried_at) VALUES (?, ?, ?)');
+      for (const skillId of c.skillIds) tried.run(userId, skillId, c.createdAt);
+      this.awardXp(userId, { level: c.level, reason: 'cook', xp: c.xp, on: c.cookedOn, at: c.createdAt });
+    });
     return this.getCooked(userId, id) as CookedEntry;
   }
 
@@ -216,20 +261,6 @@ export class Repository {
   cookedDays(userId: string): { cookedOn: LocalDate; recipeId: string }[] {
     const rows = this.db.prepare('SELECT cooked_on, recipe_id FROM cooked_recipes WHERE user_id = ?').all(userId) as Row[];
     return rows.map((r) => ({ cookedOn: String(r.cooked_on), recipeId: String(r.recipe_id) }));
-  }
-
-  holidaySaveWeeks(userId: string): LocalDate[] {
-    const rows = this.db.prepare('SELECT week_start FROM holiday_saves WHERE user_id = ? ORDER BY week_start').all(userId) as Row[];
-    return rows.map((r) => String(r.week_start));
-  }
-
-  addHolidaySave(userId: string, weekStart: LocalDate, at: string): void {
-    this.db.prepare('INSERT OR IGNORE INTO holiday_saves (user_id, week_start, created_at) VALUES (?, ?, ?)').run(userId, weekStart, at);
-  }
-
-  deleteHolidaySave(userId: string, weekStart: LocalDate): boolean {
-    const result = this.db.prepare('DELETE FROM holiday_saves WHERE user_id = ? AND week_start = ?').run(userId, weekStart);
-    return Number(result.changes) > 0;
   }
 
   unlockedAchievements(userId: string): Map<string, string> {

@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import { AVATAR_PRESETS, DISPLAY_NAME_MAX, EQUIPMENT, LANGUAGES, VISIBILITIES } from '../config.ts';
-import { CHAPTERS, LEVELS, PLANNED_RECIPES, RECIPES } from '../domain/curriculum.ts';
+import { AVATAR_PRESETS, DISPLAY_NAME_MAX, EQUIPMENT, LANGUAGES, UNITS } from '../config.ts';
+import { CHAPTERS, LEVELS, PLANNED_RECIPES, RECIPES, SKILL_IDS } from '../domain/curriculum.ts';
 import { isValidTimeZone } from '../domain/dates.ts';
 import type { Image, ProfileService } from '../service/profileService.ts';
 import { ServiceError } from '../service/profileService.ts';
@@ -13,12 +13,12 @@ import {
   asObject,
   intParam,
   nullableEnum,
+  optionalBoolean,
   optionalDate,
   optionalEnum,
   optionalString,
   optionalStringList,
   queryInt,
-  requiredDate,
   requiredStars,
   requiredString,
 } from './validate.ts';
@@ -112,6 +112,7 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*' }: AppOptio
     route('GET', '/api/me/stats/xp', (ctx) => service.xpHistory(ctx.user(), queryInt(ctx.query, 'weeks', { min: 1, max: 26, fallback: 7 }))),
     route('GET', '/api/me/achievements', (ctx) => service.achievements(ctx.user())),
     route('GET', '/api/me/skill-passport', (ctx) => service.skillPassport(ctx.user())),
+    route('GET', '/api/me/path', (ctx) => service.path(ctx.user())),
 
     // Settings and profile picture
     route('GET', '/api/me/settings', (ctx) => service.settings(ctx.user())),
@@ -120,9 +121,10 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*' }: AppOptio
       return service.updateSettings(ctx.user(), {
         displayName: optionalString(body, 'displayName', { min: 1, max: DISPLAY_NAME_MAX }),
         language: optionalEnum(body, 'language', LANGUAGES),
-        visibility: optionalEnum(body, 'visibility', VISIBILITIES),
         timezone: timezoneField(body),
-        holidaySaveMode: optionalEnum(body, 'holidaySaveMode', ['auto', 'manual'] as const),
+        units: optionalEnum(body, 'units', UNITS),
+        sound: optionalBoolean(body, 'sound'),
+        vibration: optionalBoolean(body, 'vibration'),
         avatarPreset: nullableEnum(body, 'avatarPreset', AVATAR_PRESETS),
         equipment: optionalStringList(body, 'equipment', EQUIPMENT),
       });
@@ -131,13 +133,12 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*' }: AppOptio
     route('GET', '/api/me/avatar', (ctx) => new ImageReply(service.avatar(ctx.user()))),
     route('DELETE', '/api/me/avatar', (ctx) => service.removeAvatar(ctx.user())),
 
-    // Levels
+    // Levels: Learn, Practice and Cook for each recipe. Cooking itself is recorded on the recipe below.
     route('POST', '/api/me/levels/:level/learn', (ctx) => service.completeLearn(ctx.user(), intParam(ctx.params.level, 'level'))),
     route('POST', '/api/me/levels/:level/attempts', async (ctx) =>
       reply(201, service.recordAttempt(ctx.user(), intParam(ctx.params.level, 'level'), requiredStars(await ctx.json()))),
     ),
-    route('PUT', '/api/me/skills/:level/tried-for-real', (ctx) => service.setTriedForReal(ctx.user(), intParam(ctx.params.level, 'level'), true)),
-    route('DELETE', '/api/me/skills/:level/tried-for-real', (ctx) => service.setTriedForReal(ctx.user(), intParam(ctx.params.level, 'level'), false)),
+    route('POST', '/api/me/levels/:level/skip', (ctx) => service.skipLevel(ctx.user(), intParam(ctx.params.level, 'level'))),
 
     // Cook for Real and the Recipe Book. A real cook is always a Sizzlo recipe the user unlocked.
     route('GET', '/api/me/recipe-book', (ctx) => service.recipeBook(ctx.user())),
@@ -148,6 +149,7 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*' }: AppOptio
         service.cookRecipe(ctx.user(), ctx.params.recipeId, {
           cookedOn: optionalDate(body, 'cookedOn'),
           note: optionalString(body, 'note', { max: 500 }),
+          skills: optionalStringList(body, 'skills', SKILL_IDS),
         }),
       );
     }),
@@ -159,13 +161,6 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*' }: AppOptio
     route('PUT', '/api/me/cooked/:id/photo', async (ctx) => service.setCookedPhoto(ctx.user(), ctx.params.id, await ctx.image())),
     route('GET', '/api/me/cooked/:id/photo', (ctx) => new ImageReply(service.cookedPhoto(ctx.user(), ctx.params.id))),
     route('DELETE', '/api/me/cooked/:id/photo', (ctx) => service.removeCookedPhoto(ctx.user(), ctx.params.id)),
-
-    // Holiday Saves (manual mode)
-    route('POST', '/api/me/holiday-saves', async (ctx) => reply(201, service.addHolidaySave(ctx.user(), requiredDate(await ctx.json(), 'weekStart')))),
-    route('DELETE', '/api/me/holiday-saves/:weekStart', (ctx) => {
-      const weekStart = requiredDate({ weekStart: ctx.params.weekStart }, 'weekStart');
-      return service.removeHolidaySave(ctx.user(), weekStart);
-    }),
   ];
 
   const cors = (res: ServerResponse) => {

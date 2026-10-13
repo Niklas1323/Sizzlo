@@ -1,10 +1,11 @@
-import type { AvatarPreset, HolidaySaveMode, Language, Rules, Visibility } from '../config.ts';
+import { DEFAULT_EQUIPMENT } from '../config.ts';
+import type { AvatarPreset, Equipment, Language, Rules, Units } from '../config.ts';
 import { evaluateAchievements } from '../domain/achievements.ts';
-import { getChapter, getLevel, getRecipe, LEVEL_COUNT, PLANNED_RECIPES, RECIPES } from '../domain/curriculum.ts';
-import type { Recipe } from '../domain/curriculum.ts';
-import { addDays, daysBetween, isoWeek, mondayOf, todayIn, weekLabel } from '../domain/dates.ts';
+import { getChapter, getLevel, getRecipe, LEVEL_COUNT, PLANNED_RECIPES, RECIPES, recipeOfLevel } from '../domain/curriculum.ts';
+import type { Level, LevelKind, Recipe } from '../domain/curriculum.ts';
+import { addDays, daysBetween, mondayOf, todayIn, weekLabel } from '../domain/dates.ts';
 import type { LocalDate } from '../domain/dates.ts';
-import { chapterSummaries, currentLevel, isCompleted, isUnlocked, recipeUnlocked, skillPassport, totals } from '../domain/progress.ts';
+import { bestStarsOf, chapterSummaries, currentLevel, isDone, isPassed, isUnlocked, levelStatus, pathLevels, recipeUnlocked, skillPassport, totals } from '../domain/progress.ts';
 import { computeStreak, recentWeeks, streakProjectDates } from '../domain/streak.ts';
 import { scoreAttempt } from '../domain/xp.ts';
 import type { StarResult } from '../domain/xp.ts';
@@ -35,6 +36,11 @@ export interface Image {
 
 const photoUrl = (entryId: string) => `/api/me/cooked/${entryId}/photo`;
 
+const KIND_NAMES: Record<LevelKind, string> = { learn: 'Learn', practice: 'Practice', cook: 'Cook' };
+
+/** The short form of a level that responses point to, e.g. the next level after a skip. */
+const levelRef = (l: Level) => ({ level: l.level, kind: l.kind, title: l.title, recipeId: l.recipeId });
+
 export class ProfileService {
   private readonly repo: Repository;
   private readonly media: MediaStore;
@@ -63,12 +69,9 @@ export class ProfileService {
   }
 
   createUser(displayName: string, timezone?: string): User {
-    return this.repo.createUser({
-      displayName,
-      timezone: timezone ?? this.rules.defaultTimezone,
-      holidaySaveMode: this.rules.defaultHolidaySaveMode,
-      createdAt: this.stamp(),
-    });
+    const user = this.repo.createUser({ displayName, timezone: timezone ?? this.rules.defaultTimezone, createdAt: this.stamp() });
+    this.repo.setEquipment(user.id, DEFAULT_EQUIPMENT);
+    return user;
   }
 
   // ── Streak, stats, achievements ────────────────────────────────────────────
@@ -80,8 +83,6 @@ export class ProfileService {
       result: computeStreak({
         today,
         projectDates: streakProjectDates(this.repo.cookedDays(user.id)),
-        manualSaveWeeks: this.repo.holidaySaveWeeks(user.id),
-        mode: user.holidaySaveMode,
         savesPerYear: this.rules.holidaySavesPerYear,
       }),
     };
@@ -90,6 +91,7 @@ export class ProfileService {
   private achievementContext(user: User) {
     return {
       progress: this.repo.getProgress(user.id),
+      skillsTried: this.repo.triedSkills(user.id).size,
       projects: this.repo.cookedDays(user.id).map((d) => ({ kind: getRecipe(d.recipeId)?.kind ?? ('cook' as const) })),
       bestStreak: this.streak(user).result.best,
     };
@@ -164,7 +166,6 @@ export class ProfileService {
         avatarUrl: user.avatarFile ? '/api/me/avatar' : null,
         avatarPreset: user.avatarPreset,
         language: user.language,
-        visibility: user.visibility,
         memberSince: user.createdAt.slice(0, 10),
         isDemo: user.isDemo,
       },
@@ -175,17 +176,23 @@ export class ProfileService {
         recipesCooked: new Set(this.repo.cookedDays(user.id).map((d) => d.recipeId)).size,
       },
       currentLevel: next
-        ? { level: next.level, skill: next.skill, recipe: next.recipe, chapter: { chapter: next.chapter, title: getChapter(next.chapter)?.title ?? '' } }
+        ? { ...levelRef(next), recipe: next.recipe, skills: next.skills, chapter: { chapter: next.chapter, title: getChapter(next.chapter)?.title ?? '' } }
         : null,
       chapters: chapterSummaries(progress),
       streak: this.streakView(user, 8),
-      skillPassport: skillPassport(progress).summary,
+      skillPassport: skillPassport(progress, this.repo.triedSkills(user.id)).summary,
       achievements: { earned: ach.earned, total: ach.total, latest },
     };
   }
 
   skillPassport(user: User) {
-    return skillPassport(this.repo.getProgress(user.id));
+    return skillPassport(this.repo.getProgress(user.id), this.repo.triedSkills(user.id));
+  }
+
+  /** All levels in order with the user's status, for the level map. */
+  path(user: User) {
+    const progress = this.repo.getProgress(user.id);
+    return { currentLevel: currentLevel(progress)?.level ?? null, chapters: chapterSummaries(progress), levels: pathLevels(progress) };
   }
 
   // ── Settings and profile picture ───────────────────────────────────────────
@@ -196,25 +203,23 @@ export class ProfileService {
       avatarUrl: user.avatarFile ? '/api/me/avatar' : null,
       avatarPreset: user.avatarPreset,
       language: user.language,
-      visibility: user.visibility,
       timezone: user.timezone,
-      holidaySaveMode: user.holidaySaveMode,
+      units: user.units,
+      sound: user.sound,
+      vibration: user.vibration,
       equipment: this.repo.getEquipment(user.id),
     };
   }
 
-  updateSettings(user: User, patch: { displayName?: string; language?: Language; visibility?: Visibility; timezone?: string; holidaySaveMode?: HolidaySaveMode; avatarPreset?: AvatarPreset | null; equipment?: string[] }) {
+  updateSettings(
+    user: User,
+    patch: { displayName?: string; language?: Language; timezone?: string; units?: Units; sound?: boolean; vibration?: boolean; avatarPreset?: AvatarPreset | null; equipment?: Equipment[] },
+  ) {
     const { equipment, ...fields } = patch;
     // One profile picture at a time: picking a preset replaces an uploaded photo.
     if (fields.avatarPreset && user.avatarFile) {
       this.media.remove(user.avatarFile);
       this.repo.setAvatar(user.id, null, null);
-    }
-    if (fields.holidaySaveMode === 'manual' && user.holidaySaveMode === 'auto') {
-      // Keep the saves auto mode already spent, so switching modes never rewrites past weeks.
-      for (const week of this.streak(user).result.weeks) {
-        if (week.status === 'saved') this.repo.addHolidaySave(user.id, week.weekStart, this.stamp());
-      }
     }
     const updated = this.repo.updateUser(user.id, fields);
     if (equipment) this.repo.setEquipment(user.id, equipment);
@@ -241,39 +246,44 @@ export class ProfileService {
     return { avatarUrl: null };
   }
 
-  // ── Levels and Skill Passport ──────────────────────────────────────────────
+  // ── Levels: Learn, Practice, Cook ──────────────────────────────────────────
 
   completeLearn(user: User, level: number) {
-    this.requireUnlockedLevel(user, level);
-    this.repo.markLearnCompleted(user.id, level, this.stamp());
-    return { level, understood: true };
+    this.requirePlayable(user, level, 'learn');
+    const xpAwarded = isDone(this.repo.getProgress(user.id), level) ? 0 : this.rules.xpForLearn;
+    this.repo.completeLearn(user.id, { level, xp: xpAwarded, on: this.today(user), at: this.stamp() });
+    return { level, understood: true, xpAwarded, totalXp: this.repo.totalXp(user.id), newAchievements: this.syncAchievements(user) };
   }
 
   recordAttempt(user: User, level: number, stars: StarResult) {
-    this.requireUnlockedLevel(user, level);
-    const previousBest = this.repo.getProgress(user.id).get(level)?.bestStars ?? 0;
+    this.requirePlayable(user, level, 'practice');
+    const previousBest = bestStarsOf(this.repo.getProgress(user.id), level);
     const score = scoreAttempt(previousBest, stars, this.rules);
     this.repo.recordAttempt(user.id, { level, stars, xpAwarded: score.xpAwarded, bestStars: score.bestStars, playedOn: this.today(user), at: this.stamp() });
-    const progress = this.repo.getProgress(user.id);
-    const recipe = RECIPES.find((r) => r.levels.includes(level));
+    const recipe = recipeOfLevel(level) as Recipe;
     return {
       level,
       stars,
       ...score,
       totalXp: this.repo.totalXp(user.id),
-      // Set when this result finished a recipe's levels: the app can offer Cook for Real right away.
-      recipeReady: recipe && recipe.levels[recipe.levels.length - 1] === level && recipeUnlocked(progress, recipe) ? { id: recipe.id, name: recipe.name } : null,
+      // Practice opens the recipe's Cook level: the app can offer Cook for Real right away, until it was cooked.
+      recipeReady: isDone(this.repo.getProgress(user.id), recipe.levels.cook) ? null : { id: recipe.id, name: recipe.name, cookLevel: recipe.levels.cook },
       newAchievements: this.syncAchievements(user),
     };
   }
 
-  setTriedForReal(user: User, level: number, tried: boolean) {
-    this.requireLevel(level);
-    if (tried && !isCompleted(this.repo.getProgress(user.id), level)) {
-      throw new ServiceError(409, 'not_practiced', 'Finish the Practice for this level before marking it as tried for real.');
-    }
-    this.repo.setTriedForReal(user.id, level, tried ? this.stamp() : null);
-    return { level, triedForReal: tried, newAchievements: tried ? this.syncAchievements(user) : [] };
+  /** Cook levels are optional: skipping one passes it and opens the next level. */
+  skipLevel(user: User, level: number) {
+    this.requirePlayable(user, level, 'cook');
+    // Skipping a level that was already cooked changes nothing.
+    if (!isDone(this.repo.getProgress(user.id), level)) this.repo.skipLevel(user.id, level, this.stamp());
+    const next = getLevel(level + 1);
+    return {
+      level,
+      status: levelStatus(this.repo.getProgress(user.id), level),
+      nextLevel: next ? levelRef(next) : null,
+      newAchievements: this.syncAchievements(user),
+    };
   }
 
   // ── Cook for Real and the Recipe Book ──────────────────────────────────────
@@ -303,8 +313,10 @@ export class ProfileService {
       return {
         id: r.id,
         name: r.name,
-        practice: r.practice,
-        levels: { from: r.levels[0], to: r.levels[r.levels.length - 1], done: r.levels.filter((n) => isCompleted(progress, n)).length, total: r.levels.length },
+        levels: { from: r.levels.learn, to: r.levels.cook, done: Object.values(r.levels).filter((n) => isPassed(progress, n)).length, total: 3 },
+        /** The Cook level: "skipped" still lets the user cook the recipe any time. */
+        cookLevel: { level: r.levels.cook, status: levelStatus(progress, r.levels.cook) },
+        skills: r.skills,
         kind: r.kind,
         access: r.access,
         recipeStatus: r.recipeStatus,
@@ -325,12 +337,21 @@ export class ProfileService {
     return this.repo.listCooked(user.id, limit).map((e) => this.entryView(e));
   }
 
-  cookRecipe(user: User, recipeId: string, input: { cookedOn?: LocalDate; note?: string }) {
+  /**
+   * Cook for Real. Completes the recipe's Cook level (also after a skip), earns
+   * the first-cook XP once per recipe and marks its skills as tried: the ones in
+   * `skills` (the stamps the user picked), or both when none are sent.
+   */
+  cookRecipe(user: User, recipeId: string, input: { cookedOn?: LocalDate; note?: string; skills?: string[] }) {
     const recipe = this.requireRecipe(recipeId);
-    if (!recipeUnlocked(this.repo.getProgress(user.id), recipe)) {
-      const from = recipe.levels[0];
-      const to = recipe.levels[recipe.levels.length - 1];
-      throw new ServiceError(409, 'recipe_locked', `Finish ${recipe.practice} (Levels ${from}–${to}) to cook it for real.`);
+    const progress = this.repo.getProgress(user.id);
+    if (!recipeUnlocked(progress, recipe)) {
+      throw new ServiceError(409, 'recipe_locked', `Finish Levels ${recipe.levels.learn}–${recipe.levels.practice} to cook ${recipe.name} for real.`);
+    }
+    const own = recipe.skills.map((s) => s.id);
+    const stamped = input.skills ? [...new Set(input.skills)] : own;
+    if (stamped.some((id) => !own.includes(id))) {
+      throw new ServiceError(422, 'skill_not_in_recipe', `${recipe.name} uses these skills: ${own.join(', ')}.`);
     }
     const today = this.today(user);
     const cookedOn = input.cookedOn ?? today;
@@ -339,12 +360,25 @@ export class ProfileService {
       throw new ServiceError(422, 'too_old', `A cook can be recorded up to ${this.rules.cookLogBackdateDays} days back.`);
     }
     const earlier = this.repo.cookedDays(user.id).some((d) => d.recipeId === recipe.id && d.cookedOn <= cookedOn);
-    const entry = this.repo.addCooked(user.id, { recipeId: recipe.id, cookedOn, note: input.note ?? null, createdAt: this.stamp() });
+    const xpAwarded = isDone(progress, recipe.levels.cook) ? 0 : this.rules.xpForFirstCook;
+    const entry = this.repo.recordCook(user.id, {
+      recipeId: recipe.id,
+      level: recipe.levels.cook,
+      cookedOn,
+      note: input.note ?? null,
+      skillIds: stamped,
+      xp: xpAwarded,
+      createdAt: this.stamp(),
+    });
     return {
       entry: this.entryView(entry),
       /** False when the recipe was cooked before: logged, but no streak credit. */
       countsForStreak: !earlier,
       photoUploadUrl: photoUrl(entry.id),
+      cookLevel: { level: recipe.levels.cook, status: 'done' as const },
+      xpAwarded,
+      totalXp: this.repo.totalXp(user.id),
+      skillsTried: stamped,
       streak: this.streakView(user, 8),
       newAchievements: this.syncAchievements(user),
     };
@@ -378,29 +412,6 @@ export class ProfileService {
     return this.entryView(this.requireEntry(user, id));
   }
 
-  // ── Holiday Saves ──────────────────────────────────────────────────────────
-
-  addHolidaySave(user: User, weekStart: LocalDate) {
-    if (user.holidaySaveMode !== 'manual') {
-      throw new ServiceError(409, 'auto_mode', 'Holiday Saves are applied automatically. Switch holidaySaveMode to "manual" to pick weeks yourself.');
-    }
-    if (mondayOf(weekStart) !== weekStart) throw new ServiceError(422, 'not_monday', 'weekStart must be the Monday of the week.');
-    const thisMonday = mondayOf(this.today(user));
-    if (weekStart < addDays(thisMonday, -7)) throw new ServiceError(422, 'too_old', 'Holiday Saves can cover last week, this week or a later week.');
-    const year = isoWeek(weekStart).year;
-    const taken = this.repo.holidaySaveWeeks(user.id).filter((w) => isoWeek(w).year === year && w !== weekStart).length;
-    if (taken >= this.rules.holidaySavesPerYear) {
-      throw new ServiceError(409, 'no_saves_left', `All ${this.rules.holidaySavesPerYear} Holiday Saves for ${year} are used.`);
-    }
-    this.repo.addHolidaySave(user.id, weekStart, this.stamp());
-    return this.streakView(user, 8);
-  }
-
-  removeHolidaySave(user: User, weekStart: LocalDate) {
-    if (!this.repo.deleteHolidaySave(user.id, weekStart)) throw new ServiceError(404, 'not_found', 'No Holiday Save for this week.');
-    return this.streakView(user, 8);
-  }
-
   // ── Guards ─────────────────────────────────────────────────────────────────
 
   private requireRecipe(recipeId: string): Recipe {
@@ -415,14 +426,18 @@ export class ProfileService {
     return entry;
   }
 
-  private requireLevel(level: number) {
-    if (!Number.isInteger(level) || level < 1 || level > LEVEL_COUNT || !getLevel(level)) {
-      throw new ServiceError(404, 'unknown_level', `Levels go from 1 to ${LEVEL_COUNT}.`);
-    }
+  private requireLevel(level: number): Level {
+    const found = Number.isInteger(level) ? getLevel(level) : undefined;
+    if (!found) throw new ServiceError(404, 'unknown_level', `Levels go from 1 to ${LEVEL_COUNT}.`);
+    return found;
   }
 
-  private requireUnlockedLevel(user: User, level: number) {
-    this.requireLevel(level);
+  /** The level exists, is of the kind this action needs and is unlocked. */
+  private requirePlayable(user: User, level: number, kind: LevelKind) {
+    const found = this.requireLevel(level);
+    if (found.kind !== kind) {
+      throw new ServiceError(400, 'wrong_level_kind', `Level ${level} is a ${KIND_NAMES[found.kind]} level, not a ${KIND_NAMES[kind]} level.`);
+    }
     if (!isUnlocked(this.repo.getProgress(user.id), level)) {
       throw new ServiceError(409, 'level_locked', `Finish Level ${level - 1} first.`);
     }
@@ -430,9 +445,8 @@ export class ProfileService {
 }
 
 /** Short, encouraging line for the streak card. Never shaming. */
-export function streakMessage(current: number, thisWeek: 'done' | 'saved' | 'open'): string {
+export function streakMessage(current: number, thisWeek: 'done' | 'open'): string {
   if (current === 0) return thisWeek === 'done' ? 'Week 1 done. Your streak has started!' : 'Cook a new Sizzlo recipe this week to start a streak.';
   if (thisWeek === 'done') return `${current} weeks in a row. This week is covered.`;
-  if (thisWeek === 'saved') return 'This week is covered by a Holiday Save.';
   return `Cook a new recipe this week to make it ${current + 1}.`;
 }

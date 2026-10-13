@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { DEFAULT_RULES } from '../src/config.ts';
 import { evaluateAchievements } from '../src/domain/achievements.ts';
-import { LEVELS, MAX_STARS, RECIPES } from '../src/domain/curriculum.ts';
+import { CHAPTERS, LEVELS, MAX_STARS, RECIPES, SKILLS } from '../src/domain/curriculum.ts';
 import { isLocalDate, isoWeek, mondayOf, todayIn } from '../src/domain/dates.ts';
-import { currentLevel, isUnlocked, skillPassport } from '../src/domain/progress.ts';
+import { chapterSummaries, currentLevel, isUnlocked, levelStatus, pathLevels, skillPassport, totals } from '../src/domain/progress.ts';
 import type { LevelProgress } from '../src/domain/progress.ts';
 import { computeStreak, recentWeeks, streakProjectDates } from '../src/domain/streak.ts';
 import type { StreakInput } from '../src/domain/streak.ts';
@@ -35,19 +35,54 @@ describe('dates', () => {
 });
 
 describe('curriculum', () => {
-  test('keeps the original 20-level plan', () => {
-    assert.equal(LEVELS.length, 20);
-    assert.equal(MAX_STARS, 60);
+  test('8 recipes × Learn, Practice, Cook = 24 levels', () => {
+    assert.equal(LEVELS.length, 24);
     assert.deepEqual(
-      LEVELS.filter((l) => l.access === 'free').map((l) => l.level),
-      Array.from({ length: 13 }, (_, i) => i + 1),
+      RECIPES.map((r) => r.id),
+      ['pizza-twists', 'egg-master-omelette', 'fluffy-pancakes', 'smash-burger-tacos', 'blueberry-vanilla-muffins', 'mac-and-cheese', 'rainbow-crunch-bowl', 'crispy-wrap'],
     );
-    assert.equal(LEVELS[13].recipe, 'Mac & Cheese Master');
+    for (const [i, r] of RECIPES.entries()) {
+      assert.deepEqual(r.levels, { learn: 3 * i + 1, practice: 3 * i + 2, cook: 3 * i + 3 });
+      assert.deepEqual(
+        LEVELS.filter((l) => l.recipeId === r.id).map((l) => `${l.level}:${l.kind}`),
+        [`${3 * i + 1}:learn`, `${3 * i + 2}:practice`, `${3 * i + 3}:cook`],
+      );
+    }
   });
 
-  test('every level belongs to exactly one real recipe', () => {
-    const covered = RECIPES.flatMap((r) => [...r.levels]).sort((a, b) => a - b);
-    assert.deepEqual(covered, LEVELS.map((l) => l.level));
+  test('level titles: the two skills, then the recipe itself', () => {
+    assert.deepEqual(
+      LEVELS.map((l) => l.title),
+      [
+        'Safe Cuts', 'Cut & Twist', 'Pizza Twists',
+        'Heat Control', 'Perfect Texture', 'Egg Master Omelette',
+        'Batter Science', 'Flip Master', 'Fluffy Pancakes',
+        'The Sizzle Effect', 'Crispy & Juicy', 'Smash Burger Tacos',
+        'Measure Like a Chef', 'Mixing Matters', 'Blueberry Vanilla Muffins',
+        'Sauce Science', 'Perfect Timing', 'Mac & Cheese',
+        'Knife Skills 2.0', 'Flavor Balance', 'Rainbow Crunch Bowl',
+        'Kitchen Organization', 'Kitchen Multitasking', 'Crispy Wrap',
+      ],
+    );
+    assert.deepEqual(LEVELS[2].skills.map((s) => s.id), ['safe-cuts', 'cut-and-twist']);
+  });
+
+  test('chapters, access and stars', () => {
+    assert.deepEqual(CHAPTERS.map((c) => [c.from, c.to]), [[1, 6], [7, 12], [13, 15], [16, 24]]);
+    assert.ok(LEVELS.every((l) => l.chapter === CHAPTERS.find((c) => l.level >= c.from && l.level <= c.to)?.chapter));
+    assert.deepEqual(LEVELS.filter((l) => l.access === 'free').map((l) => l.level), Array.from({ length: 15 }, (_, i) => i + 1));
+    assert.deepEqual(RECIPES.filter((r) => r.kind === 'bake').map((r) => r.id), ['pizza-twists', 'blueberry-vanilla-muffins']);
+    assert.deepEqual(RECIPES.filter((r) => r.recipeStatus === 'proposed').map((r) => r.id), ['rainbow-crunch-bowl', 'crispy-wrap']);
+    assert.equal(MAX_STARS, 24);
+  });
+
+  test('every skill says which other dishes it helps with', () => {
+    assert.equal(SKILLS.length, 16);
+    assert.equal(new Set(SKILLS.map((s) => s.id)).size, 16);
+    assert.ok(SKILLS.every((s) => s.transfersTo.length > 0));
+    const transfers = Object.fromEntries(SKILLS.map((s) => [s.name, s.transfersTo]));
+    assert.deepEqual(transfers['Safe Cuts'], ['Veggie prep', 'Herbs', 'Fruit salad']);
+    assert.deepEqual(transfers['Flip Master'], ['French toast', 'Burger patties', 'Crêpes']);
   });
 });
 
@@ -66,8 +101,7 @@ describe('xp', () => {
   });
 });
 
-const streak = (over: Partial<StreakInput>) =>
-  computeStreak({ today: '2026-10-12', projectDates: [], manualSaveWeeks: [], mode: 'auto', savesPerYear: 4, ...over });
+const streak = (over: Partial<StreakInput>) => computeStreak({ today: '2026-10-12', projectDates: [], savesPerYear: 4, ...over });
 
 const DEMO_PROJECTS = ['2026-09-02', '2026-09-16', '2026-09-23', '2026-09-30', '2026-10-07'];
 
@@ -80,7 +114,7 @@ describe('weekly cooking streak', () => {
       { recipeId: 'pizza-twists', cookedOn: '2026-10-08' },
     ]);
     assert.deepEqual(dates.sort(), ['2026-09-23', '2026-10-07']);
-    assert.equal(streak({ today: '2026-10-08', projectDates: dates, mode: 'manual' }).current, 1);
+    assert.equal(streak({ today: '2026-10-08', projectDates: dates, savesPerYear: 0 }).current, 1);
   });
 
   test('no projects yet means no streak', () => {
@@ -90,7 +124,7 @@ describe('weekly cooking streak', () => {
     assert.equal(s.atRisk, false);
   });
 
-  test('a Holiday Save protects the streak but does not extend it', () => {
+  test('a Holiday Save covers a missed week automatically but does not extend the streak', () => {
     const s = streak({ projectDates: DEMO_PROJECTS });
     assert.equal(s.current, 5);
     assert.equal(s.best, 5);
@@ -98,7 +132,7 @@ describe('weekly cooking streak', () => {
       s.weeks.map((w) => `${w.label}:${w.status}`),
       ['W36:done', 'W37:saved', 'W38:done', 'W39:done', 'W40:done', 'W41:done', 'W42:open'],
     );
-    assert.deepEqual(s.holidaySaves, { perYear: 4, usedThisYear: 1, left: 3, mode: 'auto' });
+    assert.deepEqual(s.holidaySaves, { perYear: 4, usedThisYear: 1, left: 3 });
     assert.equal(s.atRisk, true);
   });
 
@@ -115,17 +149,12 @@ describe('weekly cooking streak', () => {
     assert.equal(s.weeks[0].projects, 2);
   });
 
-  test('in manual mode a week without a picked save breaks the streak', () => {
-    const s = streak({ today: '2026-09-21', projectDates: ['2026-09-02', '2026-09-16'], mode: 'manual' });
-    assert.deepEqual(s.weeks.map((w) => w.status), ['done', 'missed', 'done', 'open']);
-    assert.equal(s.current, 1);
-    assert.equal(s.best, 1);
-  });
-
-  test('a picked save covers a missed week in manual mode', () => {
-    const s = streak({ today: '2026-09-21', projectDates: ['2026-09-02', '2026-09-16'], mode: 'manual', manualSaveWeeks: ['2026-09-07'] });
-    assert.equal(s.current, 2);
-    assert.equal(s.holidaySaves.left, 3);
+  test('Holiday Saves need no mode: every missed week spends one, the current week never does', () => {
+    const s = streak({ today: '2026-09-21', projectDates: ['2026-09-02', '2026-09-16'] });
+    assert.deepEqual(s.weeks.map((w) => w.status), ['done', 'saved', 'done', 'open']);
+    assert.deepEqual([s.current, s.best, s.atRisk], [2, 2, true]);
+    assert.deepEqual(s.holidaySaves, { perYear: 4, usedThisYear: 1, left: 3 });
+    assert.equal(streak({ today: '2026-09-21', projectDates: ['2026-09-02', '2026-09-16'], savesPerYear: 0 }).current, 1);
   });
 
   test('when saves run out, the streak restarts', () => {
@@ -143,7 +172,7 @@ describe('weekly cooking streak', () => {
       ['2026-W51:done', '2026-W52:saved', '2026-W53:done', '2027-W1:saved', '2027-W2:done'],
     );
     assert.equal(s.current, 3);
-    assert.deepEqual(s.holidaySaves, { perYear: 1, usedThisYear: 1, left: 0, mode: 'auto' });
+    assert.deepEqual(s.holidaySaves, { perYear: 1, usedThisYear: 1, left: 0 });
   });
 
   test('future dates are ignored', () => {
@@ -159,48 +188,94 @@ describe('weekly cooking streak', () => {
 });
 
 const progressOf = (rows: Array<Partial<LevelProgress> & { level: number }>) =>
-  new Map(
-    rows.map((r) => [
-      r.level,
-      { learnCompletedAt: null, bestStars: 0, attempts: 0, firstCompletedAt: null, triedForRealAt: null, ...r } as LevelProgress,
-    ]),
-  );
+  new Map(rows.map((r) => [r.level, { learnCompletedAt: null, bestStars: 0, attempts: 0, cookedAt: null, skippedAt: null, ...r } as LevelProgress]));
 
-describe('progress, Skill Passport and achievements', () => {
-  const demo = progressOf([
-    { level: 1, bestStars: 3, learnCompletedAt: 'x', triedForRealAt: 'x' },
-    { level: 2, bestStars: 3, learnCompletedAt: 'x' },
-    { level: 3, bestStars: 2, learnCompletedAt: 'x', triedForRealAt: 'x' },
-    { level: 4, bestStars: 3, learnCompletedAt: 'x' },
-    { level: 5, bestStars: 3, learnCompletedAt: 'x' },
-    { level: 6, bestStars: 2, learnCompletedAt: 'x' },
-    { level: 7, learnCompletedAt: 'x' },
-  ]);
+/** The seeded demo: L1 learn, L2 3★, L3 cooked, L4 learn, L5 2★, L6 cooked, L7 learn. */
+const DEMO = progressOf([
+  { level: 1, learnCompletedAt: 'x' },
+  { level: 2, bestStars: 3, attempts: 1 },
+  { level: 3, cookedAt: 'x' },
+  { level: 4, learnCompletedAt: 'x' },
+  { level: 5, bestStars: 2, attempts: 1 },
+  { level: 6, cookedAt: 'x' },
+  { level: 7, learnCompletedAt: 'x' },
+]);
+const DEMO_TRIED = new Map(['safe-cuts', 'cut-and-twist', 'heat-control', 'perfect-texture'].map((id) => [id, 'x']));
 
-  test('levels unlock in order and the next open level is current', () => {
-    assert.equal(isUnlocked(demo, 7), true);
-    assert.equal(isUnlocked(demo, 8), false);
-    assert.equal(currentLevel(demo)?.skill, 'Flip Master');
+describe('levels: unlocking and skipping', () => {
+  test('levels unlock in order and the first open level is current', () => {
+    assert.equal(isUnlocked(DEMO, 8), true);
+    assert.equal(isUnlocked(DEMO, 9), false);
+    assert.equal(currentLevel(DEMO)?.title, 'Flip Master');
+    assert.deepEqual(
+      pathLevels(DEMO).slice(0, 10).map((l) => l.status),
+      ['done', 'done', 'done', 'done', 'done', 'done', 'done', 'open', 'locked', 'locked'],
+    );
   });
 
-  test('Skill Passport keeps learned, practiced and tried-for-real apart', () => {
-    const p = skillPassport(demo);
-    assert.deepEqual(p.summary, { understood: 7, practiced: 6, triedForReal: 2, total: 20 });
-    assert.equal(p.skills[6].status, 'understood');
-    assert.equal(p.skills[0].status, 'tried');
+  test('a skipped Cook level is passed: the next recipe opens', () => {
+    const skipped = progressOf([...DEMO.values(), { level: 8, bestStars: 1 }, { level: 9, skippedAt: 'x' }]);
+    assert.equal(levelStatus(skipped, 9), 'skipped');
+    assert.equal(isUnlocked(skipped, 10), true);
+    assert.equal(currentLevel(skipped)?.level, 10);
+    assert.deepEqual(totals(skipped), { stars: 6, maxStars: 24, completed: 9, total: 24 });
+  });
+
+  test('cooking a skipped level later completes it', () => {
+    const cooked = progressOf([{ level: 1, learnCompletedAt: 'x' }, { level: 2, bestStars: 1 }, { level: 3, skippedAt: 'x', cookedAt: 'y' }]);
+    assert.equal(levelStatus(cooked, 3), 'done');
+  });
+
+  test('stars only count on Practice levels', () => {
+    const odd = progressOf([...DEMO.values(), { level: 1, learnCompletedAt: 'x', bestStars: 3 }]);
+    assert.equal(totals(odd).stars, 5);
+    assert.deepEqual(pathLevels(DEMO).slice(0, 3).map((l) => l.bestStars), [null, 3, null]);
+    assert.deepEqual(chapterSummaries(DEMO)[0].stars, { earned: 5, max: 6 });
+    assert.deepEqual(chapterSummaries(DEMO).map((c) => c.stars.max), [6, 6, 3, 9]);
+  });
+
+  test('a Practice level needs a star to be passed, a Learn level only to be finished', () => {
+    const p = progressOf([{ level: 1, learnCompletedAt: 'x' }, { level: 2, attempts: 0 }]);
+    assert.deepEqual([levelStatus(p, 1), levelStatus(p, 2), levelStatus(p, 3)], ['done', 'open', 'locked']);
+  });
+});
+
+describe('Skill Passport and achievements', () => {
+  test('evidence per skill: Learn done, Practice starred, tried by a real cook', () => {
+    const p = skillPassport(DEMO, DEMO_TRIED);
+    assert.deepEqual(p.summary, { understood: 6, practiced: 4, triedForReal: 4, total: 16 });
+    const byId = Object.fromEntries(p.skills.map((s) => [s.id, s]));
+    assert.equal(byId['safe-cuts'].status, 'tried');
+    assert.deepEqual(byId['safe-cuts'].transfersTo, ['Veggie prep', 'Herbs', 'Fruit salad']);
+    assert.deepEqual([byId['batter-science'].status, byId['flip-master'].status], ['understood', 'understood']);
+    assert.deepEqual([byId['flip-master'].level, byId['flip-master'].kind, byId['flip-master'].recipeId], [8, 'practice', 'fluffy-pancakes']);
+    assert.equal(byId['sizzle-effect'].status, 'new');
+  });
+
+  test('a real cook marks only the stamped skills as tried', () => {
+    const p = skillPassport(DEMO, new Map([['cut-and-twist', 'x']]));
+    const byId = Object.fromEntries(p.skills.map((s) => [s.id, s]));
+    assert.deepEqual([byId['safe-cuts'].status, byId['cut-and-twist'].status], ['practiced', 'tried']);
   });
 
   test('achievements reflect learning and real cooking', () => {
-    const states = evaluateAchievements({ progress: demo, projects: [{ kind: 'cook' }, { kind: 'bake' }], bestStreak: 5 }, new Map());
+    const states = evaluateAchievements({ progress: DEMO, skillsTried: 4, projects: [{ kind: 'bake' }, { kind: 'cook' }], bestStreak: 2 }, new Map());
     const earned = states.filter((a) => a.earned).map((a) => a.id);
-    assert.deepEqual(earned, ['first-cut', 'chapter-champ', 'perfect-plate', 'real-cook', 'home-baker', 'five-week-fire']);
+    assert.deepEqual(earned, ['first-cut', 'chapter-champ', 'perfect-plate', 'real-cook', 'home-baker']);
     assert.deepEqual(states.find((a) => a.id === 'star-collector'), {
-      id: 'star-collector', title: 'Star Collector', description: 'Earn 30 stars', progress: 16, target: 30, earned: false, unlockedAt: null,
+      id: 'star-collector', title: 'Star Collector', description: 'Earn 12 stars', progress: 5, target: 12, earned: false, unlockedAt: null,
     });
+    assert.deepEqual(states.find((a) => a.id === 'hands-on')?.progress, 4);
+  });
+
+  test('a skipped Cook level still completes its chapter', () => {
+    const skipped = progressOf([...DEMO.values(), { level: 6, skippedAt: 'x' }]);
+    const states = evaluateAchievements({ progress: skipped, skillsTried: 0, projects: [], bestStreak: 0 }, new Map());
+    assert.equal(states.find((a) => a.id === 'chapter-champ')?.earned, true);
   });
 
   test('an unlocked achievement stays earned', () => {
-    const states = evaluateAchievements({ progress: new Map(), projects: [], bestStreak: 0 }, new Map([['real-cook', '2026-10-01']]));
+    const states = evaluateAchievements({ progress: new Map(), skillsTried: 0, projects: [], bestStreak: 0 }, new Map([['real-cook', '2026-10-01']]));
     assert.equal(states.find((a) => a.id === 'real-cook')?.earned, true);
   });
 });

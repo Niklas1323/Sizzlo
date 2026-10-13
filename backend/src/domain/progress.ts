@@ -1,14 +1,27 @@
-import { CHAPTERS, LEVELS, MAX_STARS } from './curriculum.ts';
+import { CHAPTERS, getLevel, LEVELS, MAX_STARS, RECIPES } from './curriculum.ts';
 import type { Level } from './curriculum.ts';
 
+/** One user's progress on one level. Which fields are used depends on the level kind. */
 export interface LevelProgress {
   level: number;
+  /** Learn: video and theory cards finished. */
   learnCompletedAt: string | null;
+  /** Practice: best star result (0–3). It never drops. */
   bestStars: number;
   attempts: number;
-  firstCompletedAt: string | null;
-  triedForRealAt: string | null;
+  /** Cook: the recipe's first real cook. */
+  cookedAt: string | null;
+  /** Cook: skipped to move on without cooking. Cooking later still completes the level. */
+  skippedAt: string | null;
 }
+
+/**
+ * locked  – the level before it isn't passed yet
+ * open    – playable, not finished
+ * done    – Learn finished, Practice with at least one star, or Cook cooked for real
+ * skipped – a Cook level the user skipped; it can still be cooked later
+ */
+export type LevelStatus = 'locked' | 'open' | 'done' | 'skipped';
 
 /** Evidence levels of the Skill Passport, from weakest to strongest. */
 export type SkillStatus = 'new' | 'understood' | 'practiced' | 'tried';
@@ -19,76 +32,112 @@ export function bestStarsOf(progress: ProgressMap, level: number): number {
   return progress.get(level)?.bestStars ?? 0;
 }
 
-export function isCompleted(progress: ProgressMap, level: number): boolean {
-  return bestStarsOf(progress, level) > 0;
+export function isDone(progress: ProgressMap, level: number): boolean {
+  const p = progress.get(level);
+  if (!p) return false;
+  switch (getLevel(level)?.kind) {
+    case 'learn':
+      return p.learnCompletedAt !== null;
+    case 'practice':
+      return p.bestStars > 0;
+    case 'cook':
+      return p.cookedAt !== null;
+    default:
+      return false;
+  }
 }
 
-/** Levels unlock in order: a level opens once the one before it has at least one star. */
+/** Passed on the path: done, or a Cook level that was skipped. */
+export function isPassed(progress: ProgressMap, level: number): boolean {
+  return isDone(progress, level) || (getLevel(level)?.kind === 'cook' && progress.get(level)?.skippedAt != null);
+}
+
+/** Levels unlock in order: a level opens once the one before it is passed. */
 export function isUnlocked(progress: ProgressMap, level: number): boolean {
-  return level === 1 || isCompleted(progress, level - 1);
+  return level === 1 || isPassed(progress, level - 1);
 }
 
-/** Cook for Real opens once every level of the recipe has at least one star. */
-export function recipeUnlocked(progress: ProgressMap, recipe: { levels: readonly number[] }): boolean {
-  return recipe.levels.every((n) => isCompleted(progress, n));
+export function levelStatus(progress: ProgressMap, level: number): LevelStatus {
+  if (isDone(progress, level)) return 'done';
+  if (isPassed(progress, level)) return 'skipped';
+  return isUnlocked(progress, level) ? 'open' : 'locked';
+}
+
+/** Cook for Real opens with the recipe's Cook level, once its Learn and Practice are done. */
+export function recipeUnlocked(progress: ProgressMap, recipe: { levels: { cook: number } }): boolean {
+  return isUnlocked(progress, recipe.levels.cook);
 }
 
 export function currentLevel(progress: ProgressMap): Level | null {
-  return LEVELS.find((l) => !isCompleted(progress, l.level)) ?? null;
+  return LEVELS.find((l) => !isPassed(progress, l.level)) ?? null;
 }
 
-export function skillStatus(p: LevelProgress | undefined): SkillStatus {
-  if (!p) return 'new';
-  if (p.triedForRealAt) return 'tried';
-  if (p.bestStars > 0) return 'practiced';
-  if (p.learnCompletedAt) return 'understood';
-  return 'new';
+/** Every level with the user's status; stars only on Practice levels. */
+export function pathLevels(progress: ProgressMap) {
+  return LEVELS.map((l) => ({
+    ...l,
+    status: levelStatus(progress, l.level),
+    bestStars: l.kind === 'practice' ? bestStarsOf(progress, l.level) : null,
+  }));
 }
 
+const practiceLevels = (levels: readonly Level[]) => levels.filter((l) => l.kind === 'practice');
+
+/** Skipped Cook levels count as completed here, like they do for unlocking. */
 export function totals(progress: ProgressMap) {
-  let stars = 0;
-  let completed = 0;
-  for (const l of LEVELS) {
-    const best = bestStarsOf(progress, l.level);
-    stars += best;
-    if (best > 0) completed += 1;
-  }
-  return { stars, maxStars: MAX_STARS, completed, total: LEVELS.length };
+  return {
+    stars: practiceLevels(LEVELS).reduce((sum, l) => sum + bestStarsOf(progress, l.level), 0),
+    maxStars: MAX_STARS,
+    completed: LEVELS.filter((l) => isPassed(progress, l.level)).length,
+    total: LEVELS.length,
+  };
 }
 
 export function chapterSummaries(progress: ProgressMap) {
   return CHAPTERS.map((c) => {
     const levels = LEVELS.filter((l) => l.chapter === c.chapter);
-    const completed = levels.filter((l) => isCompleted(progress, l.level)).length;
-    const stars = levels.reduce((sum, l) => sum + bestStarsOf(progress, l.level), 0);
+    const completed = levels.filter((l) => isPassed(progress, l.level)).length;
+    const stars = practiceLevels(levels).reduce((sum, l) => sum + bestStarsOf(progress, l.level), 0);
     return {
       chapter: c.chapter,
       title: c.title,
       levels: { from: c.from, to: c.to, completed, total: levels.length },
-      stars: { earned: stars, max: levels.length * 3 },
+      stars: { earned: stars, max: practiceLevels(levels).length * 3 },
       complete: completed === levels.length,
     };
   });
 }
 
-export function skillPassport(progress: ProgressMap) {
-  const skills = LEVELS.map((l) => {
-    const p = progress.get(l.level);
-    const status = skillStatus(p);
-    return {
-      level: l.level,
-      chapter: l.chapter,
-      skill: l.skill,
-      focus: l.focus,
-      recipe: l.recipe,
-      status,
-      understood: status !== 'new',
-      practiced: status === 'practiced' || status === 'tried',
-      triedForReal: status === 'tried',
-      bestStars: p?.bestStars ?? 0,
-      unlocked: isUnlocked(progress, l.level),
-    };
-  });
+/**
+ * Evidence per skill. Both skills of a recipe share its Learn and Practice level:
+ * understood once the Learn level is done, practiced once the Practice level has
+ * a star. Tried comes only from a real cook (`tried`: skill id → when).
+ */
+export function skillPassport(progress: ProgressMap, tried: ReadonlyMap<string, string>) {
+  const skills = RECIPES.flatMap((r) =>
+    r.skills.map((s, i) => {
+      const level = i === 0 ? r.levels.learn : r.levels.practice;
+      const understood = isDone(progress, r.levels.learn);
+      const practiced = isDone(progress, r.levels.practice);
+      const triedAt = tried.get(s.id) ?? null;
+      const status: SkillStatus = triedAt ? 'tried' : practiced ? 'practiced' : understood ? 'understood' : 'new';
+      return {
+        ...s,
+        level,
+        kind: i === 0 ? ('learn' as const) : ('practice' as const),
+        chapter: getLevel(level)?.chapter ?? 0,
+        recipeId: r.id,
+        recipe: r.name,
+        status,
+        understood,
+        practiced,
+        triedForReal: triedAt !== null,
+        triedAt,
+        bestStars: bestStarsOf(progress, r.levels.practice),
+        unlocked: isUnlocked(progress, level),
+      };
+    }),
+  );
   return {
     summary: {
       understood: skills.filter((s) => s.understood).length,

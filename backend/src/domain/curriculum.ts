@@ -1,5 +1,13 @@
 export type Access = 'free' | 'plus';
 
+/**
+ * Every recipe is taught in three levels:
+ * learn    – video and theory cards
+ * practice – three mini-game scenes, 1–3 stars
+ * cook     – cook the real recipe; optional, can be skipped
+ */
+export type LevelKind = 'learn' | 'practice' | 'cook';
+
 export interface Chapter {
   chapter: number;
   title: string;
@@ -7,76 +15,138 @@ export interface Chapter {
   to: number;
 }
 
-export interface Level {
-  level: number;
-  chapter: number;
-  skill: string;
+export interface Skill {
+  id: string;
+  name: string;
   focus: string;
-  recipe: string;
-  access: Access;
-  /** Levels 17–20 use recipes that are only proposed so far. */
-  recipeStatus: 'confirmed' | 'proposed';
+  /** Other dishes the skill helps with. Sizzlo teaches cooking; the recipe is only the project. */
+  transfersTo: readonly string[];
 }
-
-/** The original 20-level main plan (levelplan_hauptversion.csv). */
-export const CHAPTERS: readonly Chapter[] = [
-  { chapter: 1, title: 'Kitchen Foundations', from: 1, to: 4 },
-  { chapter: 2, title: 'Heat & Texture', from: 5, to: 9 },
-  { chapter: 3, title: 'Baking Academy', from: 10, to: 13 },
-  { chapter: 4, title: 'Everyday Chef', from: 14, to: 20 },
-];
-
-export const LEVELS: readonly Level[] = [
-  { level: 1, chapter: 1, skill: 'Safe Cuts', focus: 'Knife and tool safety, cut sizes', recipe: 'Pizza Twists', access: 'free', recipeStatus: 'confirmed' },
-  { level: 2, chapter: 1, skill: 'Dough Rescue', focus: 'Dough structure, moisture, filling', recipe: 'Pizza Twists', access: 'free', recipeStatus: 'confirmed' },
-  { level: 3, chapter: 1, skill: 'Heat Control', focus: 'How heat works, doneness', recipe: 'Egg Master', access: 'free', recipeStatus: 'confirmed' },
-  { level: 4, chapter: 1, skill: 'Perfect Texture', focus: 'Doneness, consistency, folding', recipe: 'Egg Master', access: 'free', recipeStatus: 'confirmed' },
-  { level: 5, chapter: 2, skill: 'Batter Science', focus: 'Wet and dry ingredients, leavening', recipe: 'Pancake Lab', access: 'free', recipeStatus: 'confirmed' },
-  { level: 6, chapter: 2, skill: 'Mix & Measure', focus: 'Batter consistency, dosing, portioning', recipe: 'Pancake Lab', access: 'free', recipeStatus: 'confirmed' },
-  { level: 7, chapter: 2, skill: 'Flip Master', focus: 'Flipping, doneness cues, browning', recipe: 'Pancake Lab', access: 'free', recipeStatus: 'confirmed' },
-  { level: 8, chapter: 2, skill: 'The Sizzle Effect', focus: 'Searing, browning, hygiene', recipe: 'Smash Burger Tacos', access: 'free', recipeStatus: 'confirmed' },
-  { level: 9, chapter: 2, skill: 'Crispy & Juicy', focus: 'Moisture, crispness, combining', recipe: 'Smash Burger Tacos', access: 'free', recipeStatus: 'confirmed' },
-  { level: 10, chapter: 3, skill: 'Measure Like a Chef', focus: 'Ratios, weighing', recipe: 'Blueberry Vanilla Muffins', access: 'free', recipeStatus: 'confirmed' },
-  { level: 11, chapter: 3, skill: 'Mixing Matters', focus: 'Mixing right, not overmixing', recipe: 'Blueberry Vanilla Muffins', access: 'free', recipeStatus: 'confirmed' },
-  { level: 12, chapter: 3, skill: 'Rise & Bake', focus: 'Oven, leavening, even baking', recipe: 'Blueberry Vanilla Muffins', access: 'free', recipeStatus: 'confirmed' },
-  { level: 13, chapter: 3, skill: 'Baking Rescue', focus: 'Combining causes of failure and rescuing', recipe: 'Blueberry Vanilla Muffins', access: 'free', recipeStatus: 'confirmed' },
-  { level: 14, chapter: 4, skill: 'Pasta Basics', focus: 'Pasta, water, salt, cooking', recipe: 'Mac & Cheese Master', access: 'plus', recipeStatus: 'confirmed' },
-  { level: 15, chapter: 4, skill: 'Sauce Science', focus: 'Creamy sauce, binding, consistency', recipe: 'Mac & Cheese Master', access: 'plus', recipeStatus: 'confirmed' },
-  { level: 16, chapter: 4, skill: 'Perfect Timing', focus: 'Coordinating pasta and sauce', recipe: 'Mac & Cheese Master', access: 'plus', recipeStatus: 'confirmed' },
-  { level: 17, chapter: 4, skill: 'Knife Skills 2.0', focus: 'Prepping vegetables, piece sizes', recipe: 'Rainbow Crunch Bowl', access: 'plus', recipeStatus: 'proposed' },
-  { level: 18, chapter: 4, skill: 'Flavor Balance', focus: 'Acid, salt, fat, spices', recipe: 'Rainbow Crunch Bowl', access: 'plus', recipeStatus: 'proposed' },
-  { level: 19, chapter: 4, skill: 'Kitchen Organization', focus: 'Mise en place, workflows', recipe: 'Crispy Wrap Challenge', access: 'plus', recipeStatus: 'proposed' },
-  { level: 20, chapter: 4, skill: 'Kitchen Multitasking', focus: 'Coordination and priorities', recipe: 'Crispy Wrap Challenge', access: 'plus', recipeStatus: 'proposed' },
-];
 
 export interface Recipe {
   id: string;
   name: string;
-  /** Practice project name from the level plan. */
-  practice: string;
-  /** Levels that teach the skills for this recipe. Cook for Real opens when all of them are done. */
-  levels: readonly number[];
   /** Baking counts for the streak exactly like cooking; the kind only feeds achievements. */
   kind: 'cook' | 'bake';
+  access: Access;
+  /** Rainbow Crunch Bowl and Crispy Wrap are only proposed so far. */
+  recipeStatus: 'confirmed' | 'proposed';
+  /** Its Learn, Practice and Cook level. Cook for Real opens once Learn and Practice are done. */
+  levels: { learn: number; practice: number; cook: number };
+  /** The skills its Learn and Practice level teach, in that order. */
+  skills: readonly [Skill, Skill];
+}
+
+export interface Level {
+  level: number;
+  chapter: number;
+  kind: LevelKind;
+  /** Learn and Practice levels are named after their skill, the Cook level after the recipe. */
+  title: string;
+  recipeId: string;
+  recipe: string;
+  /** Learn and Practice teach one skill each; the Cook level puts both to use. */
+  skills: readonly Skill[];
   access: Access;
   recipeStatus: 'confirmed' | 'proposed';
 }
 
-/** The real recipes behind the practice projects ("Cook for Real"). */
-export const RECIPES: readonly Recipe[] = [
-  { id: 'pizza-twists', name: 'Pizza Twists', practice: 'Pizza Twists', levels: [1, 2], kind: 'bake', access: 'free', recipeStatus: 'confirmed' },
-  { id: 'egg-master-omelette', name: 'Egg Master Omelette', practice: 'Egg Master', levels: [3, 4], kind: 'cook', access: 'free', recipeStatus: 'confirmed' },
-  { id: 'fluffy-pancakes', name: 'Fluffy Pancakes', practice: 'Pancake Lab', levels: [5, 6, 7], kind: 'cook', access: 'free', recipeStatus: 'confirmed' },
-  { id: 'smash-burger-tacos', name: 'Smash Burger Tacos', practice: 'Smash Burger Tacos', levels: [8, 9], kind: 'cook', access: 'free', recipeStatus: 'confirmed' },
-  { id: 'blueberry-vanilla-muffins', name: 'Blueberry Vanilla Muffins', practice: 'Blueberry Vanilla Muffins', levels: [10, 11, 12, 13], kind: 'bake', access: 'free', recipeStatus: 'confirmed' },
-  { id: 'mac-and-cheese', name: 'Mac & Cheese', practice: 'Mac & Cheese Master', levels: [14, 15, 16], kind: 'cook', access: 'plus', recipeStatus: 'confirmed' },
-  { id: 'rainbow-crunch-bowl', name: 'Rainbow Crunch Bowl', practice: 'Rainbow Crunch Bowl', levels: [17, 18], kind: 'cook', access: 'plus', recipeStatus: 'proposed' },
-  { id: 'crispy-wrap', name: 'Crispy Wrap', practice: 'Crispy Wrap Challenge', levels: [19, 20], kind: 'cook', access: 'plus', recipeStatus: 'proposed' },
+export const CHAPTERS: readonly Chapter[] = [
+  { chapter: 1, title: 'Kitchen Foundations', from: 1, to: 6 },
+  { chapter: 2, title: 'Heat & Texture', from: 7, to: 12 },
+  { chapter: 3, title: 'Baking Academy', from: 13, to: 15 },
+  { chapter: 4, title: 'Everyday Chef', from: 16, to: 24 },
 ];
 
-export function getRecipe(id: string): Recipe | undefined {
-  return RECIPES.find((r) => r.id === id);
-}
+const skill = (id: string, name: string, focus: string, transfersTo: string[]): Skill => ({ id, name, focus, transfersTo });
+
+/** The recipes in path order, each with the skills its Learn and Practice level teach. */
+const PLAN: ReadonlyArray<Omit<Recipe, 'levels'>> = [
+  {
+    id: 'pizza-twists', name: 'Pizza Twists', kind: 'bake', access: 'free', recipeStatus: 'confirmed',
+    skills: [
+      skill('safe-cuts', 'Safe Cuts', 'Knife and tool safety, cut sizes', ['Veggie prep', 'Herbs', 'Fruit salad']),
+      skill('cut-and-twist', 'Cut & Twist', 'Cutting dough into strips, filling and twisting', ['Hand pies', 'Cheese straws', 'Cookies']),
+    ],
+  },
+  {
+    id: 'egg-master-omelette', name: 'Egg Master Omelette', kind: 'cook', access: 'free', recipeStatus: 'confirmed',
+    skills: [
+      skill('heat-control', 'Heat Control', 'How heat works, doneness', ['Pancakes', 'Fried eggs', 'Grilled cheese']),
+      skill('perfect-texture', 'Perfect Texture', 'Doneness, consistency, folding', ['Scrambled eggs', 'Frittata', 'Custard']),
+    ],
+  },
+  {
+    id: 'fluffy-pancakes', name: 'Fluffy Pancakes', kind: 'cook', access: 'free', recipeStatus: 'confirmed',
+    skills: [
+      skill('batter-science', 'Batter Science', 'Wet and dry ingredients, leavening', ['Muffins', 'Crêpes', 'Waffles']),
+      skill('flip-master', 'Flip Master', 'Flipping, doneness cues, browning', ['French toast', 'Burger patties', 'Crêpes']),
+    ],
+  },
+  {
+    id: 'smash-burger-tacos', name: 'Smash Burger Tacos', kind: 'cook', access: 'free', recipeStatus: 'confirmed',
+    skills: [
+      skill('sizzle-effect', 'The Sizzle Effect', 'Searing, browning, hygiene', ['Seared steak', 'Stir-fry', 'Crispy potatoes']),
+      skill('crispy-and-juicy', 'Crispy & Juicy', 'Moisture, crispness, combining', ['Quesadillas', 'Chicken thighs', 'Hash browns']),
+    ],
+  },
+  {
+    id: 'blueberry-vanilla-muffins', name: 'Blueberry Vanilla Muffins', kind: 'bake', access: 'free', recipeStatus: 'confirmed',
+    skills: [
+      skill('measure-like-a-chef', 'Measure Like a Chef', 'Ratios, weighing', ['Banana bread', 'Shortbread', 'Bread dough']),
+      skill('mixing-matters', 'Mixing Matters', 'Mixing right, not overmixing', ['Brownies', 'Sponge cake', 'Scones']),
+    ],
+  },
+  {
+    id: 'mac-and-cheese', name: 'Mac & Cheese', kind: 'cook', access: 'plus', recipeStatus: 'confirmed',
+    skills: [
+      skill('sauce-science', 'Sauce Science', 'Creamy sauce, binding, consistency', ['Lasagne', 'Gravy', 'Creamy soups']),
+      skill('perfect-timing', 'Perfect Timing', 'Coordinating pasta and sauce', ['Spaghetti bolognese', 'Curry and rice', 'Sunday roast']),
+    ],
+  },
+  {
+    id: 'rainbow-crunch-bowl', name: 'Rainbow Crunch Bowl', kind: 'cook', access: 'plus', recipeStatus: 'proposed',
+    skills: [
+      skill('knife-skills-2', 'Knife Skills 2.0', 'Prepping vegetables, piece sizes', ['Salsa', 'Coleslaw', 'Stir-fry']),
+      skill('flavor-balance', 'Flavor Balance', 'Acid, salt, fat, spices', ['Salad dressing', 'Soups', 'Curry']),
+    ],
+  },
+  {
+    id: 'crispy-wrap', name: 'Crispy Wrap', kind: 'cook', access: 'plus', recipeStatus: 'proposed',
+    skills: [
+      skill('kitchen-organization', 'Kitchen Organization', 'Mise en place, workflows', ['Fajitas', 'Meal prep', 'Sheet-pan dinners']),
+      skill('kitchen-multitasking', 'Kitchen Multitasking', 'Coordination and priorities', ['Full breakfast', 'Burgers and fries', 'Pasta with garlic bread']),
+    ],
+  },
+];
+
+/** The real recipes behind the path, three levels each. */
+export const RECIPES: readonly Recipe[] = PLAN.map((r, i) => ({ ...r, levels: { learn: 3 * i + 1, practice: 3 * i + 2, cook: 3 * i + 3 } }));
+
+const chapterOf = (level: number) => CHAPTERS.find((c) => level >= c.from && level <= c.to)?.chapter ?? 0;
+
+export const LEVELS: readonly Level[] = RECIPES.flatMap((r) => {
+  const level = (n: number, kind: LevelKind, title: string, skills: readonly Skill[]): Level => ({
+    level: n,
+    chapter: chapterOf(n),
+    kind,
+    title,
+    recipeId: r.id,
+    recipe: r.name,
+    skills,
+    access: r.access,
+    recipeStatus: r.recipeStatus,
+  });
+  const [learnt, practised] = r.skills;
+  return [
+    level(r.levels.learn, 'learn', learnt.name, [learnt]),
+    level(r.levels.practice, 'practice', practised.name, [practised]),
+    level(r.levels.cook, 'cook', r.name, r.skills),
+  ];
+});
+
+export const SKILLS: readonly Skill[] = RECIPES.flatMap((r) => r.skills);
+export const SKILL_IDS: readonly string[] = SKILLS.map((s) => s.id);
 
 /** Requested recipes whose place on the path is still open. Never given a level number here. */
 export const PLANNED_RECIPES = [
@@ -85,7 +155,8 @@ export const PLANNED_RECIPES = [
 ];
 
 export const LEVEL_COUNT = LEVELS.length;
-export const MAX_STARS = LEVEL_COUNT * 3;
+/** Stars exist only on Practice levels. */
+export const MAX_STARS = LEVELS.filter((l) => l.kind === 'practice').length * 3;
 
 export function getLevel(level: number): Level | undefined {
   return LEVELS.find((l) => l.level === level);
@@ -93,4 +164,12 @@ export function getLevel(level: number): Level | undefined {
 
 export function getChapter(chapter: number): Chapter | undefined {
   return CHAPTERS.find((c) => c.chapter === chapter);
+}
+
+export function getRecipe(id: string): Recipe | undefined {
+  return RECIPES.find((r) => r.id === id);
+}
+
+export function recipeOfLevel(level: number): Recipe | undefined {
+  return RECIPES.find((r) => r.levels.learn === level || r.levels.practice === level || r.levels.cook === level);
 }
