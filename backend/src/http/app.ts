@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { AVATAR_PRESETS, DISPLAY_NAME_MAX, EQUIPMENT, LANGUAGES, UNITS } from '../config.ts';
@@ -34,6 +35,8 @@ interface Ctx {
   image: () => Promise<Image>;
   /** Resolves the signed-in user; throws 401 when there is none. */
   user: () => User;
+  /** Checks the X-Admin-Key header; 404 while no admin key is configured, 403 when it doesn't match. */
+  admin: () => void;
 }
 
 type Handler = (ctx: Ctx) => unknown;
@@ -85,9 +88,15 @@ export interface AppOptions {
   maxPhotoBytes: number;
   /** Allowed browser origin for the future app frontend. */
   corsOrigin?: string;
+  /** Unlocks GET /api/admin/feedback (header X-Admin-Key). Without it the route doesn't exist. */
+  adminKey?: string;
+  /** Longest feedback message. */
+  feedbackMaxChars?: number;
 }
 
-export function createApp({ service, maxPhotoBytes, corsOrigin = '*' }: AppOptions): Server {
+const digest = (s: string) => createHash('sha256').update(s).digest();
+
+export function createApp({ service, maxPhotoBytes, corsOrigin = '*', adminKey, feedbackMaxChars = 2000 }: AppOptions): Server {
   const timezoneField = (body: Record<string, unknown>) => {
     const timezone = optionalString(body, 'timezone', { max: 64 });
     if (timezone && !isValidTimeZone(timezone)) throw new HttpError(400, 'invalid_field', 'timezone must be an IANA time zone like Europe/Zurich.');
@@ -114,6 +123,27 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*' }: AppOptio
     route('GET', '/api/me/skill-passport', (ctx) => service.skillPassport(ctx.user())),
     route('GET', '/api/me/path', (ctx) => service.path(ctx.user())),
 
+    // Home-screen widgets: the weekly streak and Continue.
+    route('GET', '/api/me/widget', (ctx) => service.widget(ctx.user())),
+
+    // "Give feedback" in settings. Stored, and passed on to the team's webhook when one is set.
+    route('POST', '/api/me/feedback', async (ctx) => {
+      const user = ctx.user();
+      const body = await ctx.json();
+      return reply(
+        201,
+        await service.sendFeedback(user, {
+          message: requiredString(body, 'message', { max: feedbackMaxChars }),
+          screen: optionalString(body, 'screen', { max: 64 }),
+          appVersion: optionalString(body, 'appVersion', { max: 32 }),
+        }),
+      );
+    }),
+    route('GET', '/api/admin/feedback', (ctx) => {
+      ctx.admin();
+      return service.feedbackList(queryInt(ctx.query, 'limit', { min: 1, max: 500, fallback: 50 }));
+    }),
+
     // Settings and profile picture
     route('GET', '/api/me/settings', (ctx) => service.settings(ctx.user())),
     route('PATCH', '/api/me/settings', async (ctx) => {
@@ -123,7 +153,6 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*' }: AppOptio
         language: optionalEnum(body, 'language', LANGUAGES),
         timezone: timezoneField(body),
         units: optionalEnum(body, 'units', UNITS),
-        sound: optionalBoolean(body, 'sound'),
         vibration: optionalBoolean(body, 'vibration'),
         avatarPreset: nullableEnum(body, 'avatarPreset', AVATAR_PRESETS),
         equipment: optionalStringList(body, 'equipment', EQUIPMENT),
@@ -232,6 +261,13 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*' }: AppOptio
           const id = req.headers['x-user-id'];
           if (typeof id !== 'string' || id.length === 0) throw new HttpError(401, 'unauthenticated', 'Send the X-User-Id header.');
           return service.requireUser(id);
+        },
+        admin: () => {
+          if (!adminKey) throw new HttpError(404, 'not_found', 'No such endpoint.');
+          const sent = req.headers['x-admin-key'];
+          if (typeof sent !== 'string' || !timingSafeEqual(digest(sent), digest(adminKey))) {
+            throw new HttpError(403, 'forbidden', 'Send the right X-Admin-Key header.');
+          }
         },
       };
 

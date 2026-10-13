@@ -7,7 +7,7 @@ import { after, before, describe, test } from 'node:test';
 import { DEFAULT_RULES } from '../src/config.ts';
 import { createApp } from '../src/http/app.ts';
 import { DEMO_USER_ID, seedDemoUser } from '../src/seed.ts';
-import { ProfileService } from '../src/service/profileService.ts';
+import { ProfileService, widgetMessage } from '../src/service/profileService.ts';
 import { openDatabase } from '../src/store/db.ts';
 import { MediaStore } from '../src/store/media.ts';
 import { Repository } from '../src/store/repository.ts';
@@ -93,6 +93,30 @@ describe('profile API (demo user)', () => {
     assert.deepEqual(body.streak.holidaySaves, { perYear: 4, usedThisYear: 0, left: 4 });
     assert.deepEqual([body.achievements.earned, body.achievements.total], [5, 12]);
     assert.deepEqual(body.skillPassport, { understood: 6, practiced: 4, triedForReal: 4, total: 16 });
+  });
+
+  test('home-screen widget: streak needs a cook this week, Continue points at Level 8', async () => {
+    const { status, body } = await call('GET', '/api/me/widget');
+    assert.equal(status, 200);
+    assert.deepEqual(body, {
+      day: '2026-10-12',
+      streak: {
+        current: 2,
+        state: 'at-risk',
+        daysLeft: 7,
+        message: 'Cook a new recipe by Sunday to make it 3.',
+        weeks: [
+          { label: 'W38', status: 'none' },
+          { label: 'W39', status: 'none' },
+          { label: 'W40', status: 'done' },
+          { label: 'W41', status: 'done' },
+          { label: 'W42', status: 'open' },
+        ],
+      },
+      continue: { level: 8, kind: 'practice', title: 'Flip Master', recipeId: 'fluffy-pancakes', recipe: 'Fluffy Pancakes' },
+    });
+    assert.equal((await call('GET', '/api/me/widget', { user: null })).status, 401);
+    assert.equal(widgetMessage('at-risk', 2, 1), 'Last day! Cook a new recipe to make it 3.');
   });
 
   test('streak history for the last 8 weeks', async () => {
@@ -325,7 +349,7 @@ describe('levels: Learn, Practice, Cook', () => {
 describe('editing the profile', () => {
   test('name and settings', async () => {
     const before = await call('GET', '/api/me/settings');
-    assert.deepEqual(Object.keys(before.body).sort(), ['avatarPreset', 'avatarUrl', 'displayName', 'equipment', 'language', 'sound', 'timezone', 'units', 'vibration']);
+    assert.deepEqual(Object.keys(before.body).sort(), ['avatarPreset', 'avatarUrl', 'displayName', 'equipment', 'language', 'timezone', 'units', 'vibration']);
     assert.equal((await call('PATCH', '/api/me/settings', { body: { displayName: '' } })).status, 400);
     assert.equal((await call('PATCH', '/api/me/settings', { body: { displayName: 'Alexandra Rose' } })).status, 400);
     assert.equal((await call('PATCH', '/api/me/settings', { body: { displayName: 'Alexandra Ros' } })).status, 200);
@@ -366,14 +390,14 @@ describe('editing the profile', () => {
     assert.equal((await user()).avatarPreset, null);
   });
 
-  test('units, sound, vibration and kitchen tools', async () => {
-    const res = await call('PATCH', '/api/me/settings', { body: { units: 'us', sound: false, vibration: false, equipment: ['spatula', 'kitchen-scale', 'pan'] } });
+  test('units, vibration and kitchen tools; sound is no setting any more', async () => {
+    const res = await call('PATCH', '/api/me/settings', { body: { units: 'us', vibration: false, equipment: ['spatula', 'kitchen-scale', 'pan'] } });
     assert.equal(res.status, 200);
-    assert.deepEqual([res.body.units, res.body.sound, res.body.vibration, res.body.equipment], ['us', false, false, ['kitchen-scale', 'pan', 'spatula']]);
-    const back = await call('PATCH', '/api/me/settings', { body: { units: 'metric', sound: true } });
-    assert.deepEqual([back.body.units, back.body.sound, back.body.vibration], ['metric', true, false]);
+    assert.deepEqual([res.body.units, res.body.vibration, res.body.equipment], ['us', false, ['kitchen-scale', 'pan', 'spatula']]);
+    const back = await call('PATCH', '/api/me/settings', { body: { units: 'metric', sound: false } });
+    assert.deepEqual([back.status, back.body.units, back.body.vibration, 'sound' in back.body], [200, 'metric', false, false]);
 
-    for (const body of [{ units: 'imperial' }, { sound: 'off' }, { vibration: 0 }, { equipment: ['spoon'] }, { equipment: 'pan' }]) {
+    for (const body of [{ units: 'imperial' }, { vibration: 0 }, { equipment: ['spoon'] }, { equipment: 'pan' }]) {
       const bad = await call('PATCH', '/api/me/settings', { body });
       assert.deepEqual([bad.status, bad.body.error.code], [400, 'invalid_field'], JSON.stringify(body));
     }
@@ -405,7 +429,10 @@ describe('a brand-new user', () => {
     const book = await call('GET', '/api/me/recipe-book', { user: sam });
     assert.ok(book.body.recipes.every((r: { status: string }) => r.status === 'locked'));
     const settings = (await call('GET', '/api/me/settings', { user: sam })).body;
-    assert.deepEqual([settings.units, settings.sound, settings.vibration], ['metric', true, true]);
+    assert.deepEqual([settings.units, settings.vibration], ['metric', true]);
+    const widget = (await call('GET', '/api/me/widget', { user: sam })).body;
+    assert.deepEqual([widget.streak.state, widget.streak.current, widget.streak.message], ['new', 0, 'Cook a new recipe to start your streak.']);
+    assert.deepEqual([widget.continue.level, widget.continue.title], [1, 'Safe Cuts']);
     assert.deepEqual(settings.equipment, ['baking-tray', 'hob', 'knife', 'oven', 'pan', 'pot', 'spatula', 'whisk']);
     assert.equal((await call('POST', '/api/users', { user: null, body: { displayName: 'Sam', timezone: 'Mars/Base' } })).status, 400);
   });
@@ -422,6 +449,9 @@ describe('a brand-new user', () => {
     assert.deepEqual(passport.skills.slice(0, 2).map((s: { status: string }) => s.status), ['practiced', 'tried']);
     assert.deepEqual(passport.summary, { understood: 2, practiced: 2, triedForReal: 1, total: 16 });
     assert.equal((await call('GET', '/api/me/profile', { user: sam })).body.currentLevel.level, 4);
+    const widget = (await call('GET', '/api/me/widget', { user: sam })).body;
+    assert.deepEqual([widget.streak.state, widget.streak.current, widget.streak.message], ['on-track', 1, 'This week is covered. See you next week!']);
+    assert.equal(widget.continue.level, 4);
   });
 
   test('unknown routes and methods', async () => {

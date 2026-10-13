@@ -11,7 +11,6 @@ export interface User {
   language: Language;
   timezone: string;
   units: Units;
-  sound: boolean;
   vibration: boolean;
   isDemo: boolean;
   avatarFile: string | null;
@@ -36,7 +35,6 @@ export interface UserPatch {
   language?: Language;
   timezone?: string;
   units?: Units;
-  sound?: boolean;
   vibration?: boolean;
   avatarPreset?: AvatarPreset | null;
 }
@@ -49,7 +47,6 @@ const toUser = (r: Row): User => ({
   language: r.language as Language,
   timezone: String(r.timezone),
   units: r.units as Units,
-  sound: Number(r.sound) === 1,
   vibration: Number(r.vibration) === 1,
   isDemo: Number(r.is_demo) === 1,
   avatarFile: r.avatar_file == null ? null : String(r.avatar_file),
@@ -78,6 +75,30 @@ const toProgress = (r: Row): LevelProgress => ({
   attempts: Number(r.attempts),
   cookedAt: optional(r.cooked_at),
   skippedAt: optional(r.skipped_at),
+});
+
+export interface FeedbackEntry {
+  id: string;
+  userId: string | null;
+  displayName: string;
+  message: string;
+  screen: string | null;
+  appVersion: string | null;
+  language: string;
+  createdAt: string;
+  forwardedAt: string | null;
+}
+
+const toFeedback = (r: Row): FeedbackEntry => ({
+  id: String(r.id),
+  userId: optional(r.user_id),
+  displayName: String(r.display_name),
+  message: String(r.message),
+  screen: optional(r.screen),
+  appVersion: optional(r.app_version),
+  language: String(r.language),
+  createdAt: String(r.created_at),
+  forwardedAt: optional(r.forwarded_at),
 });
 
 /** Why XP was awarded: the kind of level that earned it. */
@@ -109,11 +130,10 @@ export class Repository {
       language: 'language',
       timezone: 'timezone',
       units: 'units',
-      sound: 'sound',
       vibration: 'vibration',
       avatarPreset: 'avatar_preset',
     };
-    // SQLite has no booleans: sound and vibration are stored as 1 or 0.
+    // SQLite has no booleans: vibration is stored as 1 or 0.
     const value = (v: UserPatch[keyof UserPatch]) => (typeof v === 'boolean' ? (v ? 1 : 0) : (v ?? null));
     const keys = (Object.keys(patch) as (keyof UserPatch)[]).filter((k) => patch[k] !== undefined);
     if (keys.length > 0) {
@@ -271,5 +291,33 @@ export class Repository {
   unlockAchievements(userId: string, ids: readonly string[], at: string): void {
     const insert = this.db.prepare('INSERT OR IGNORE INTO achievements (user_id, achievement_id, unlocked_at) VALUES (?, ?, ?)');
     for (const id of ids) insert.run(userId, id, at);
+  }
+
+  addFeedback(f: Omit<FeedbackEntry, 'id' | 'forwardedAt'>): FeedbackEntry {
+    const id = randomUUID();
+    this.db
+      .prepare('INSERT INTO feedback (id, user_id, display_name, message, screen, app_version, language, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, f.userId, f.displayName, f.message, f.screen, f.appVersion, f.language, f.createdAt);
+    return this.getFeedback(id) as FeedbackEntry;
+  }
+
+  getFeedback(id: string): FeedbackEntry | undefined {
+    const row = this.db.prepare('SELECT * FROM feedback WHERE id = ?').get(id) as Row | undefined;
+    return row ? toFeedback(row) : undefined;
+  }
+
+  markFeedbackForwarded(id: string, at: string): void {
+    this.db.prepare('UPDATE feedback SET forwarded_at = ? WHERE id = ?').run(at, id);
+  }
+
+  /** How many messages a user sent since `since` (an ISO timestamp); keeps the form from being flooded. */
+  countFeedbackSince(userId: string, since: string): number {
+    const row = this.db.prepare('SELECT COUNT(*) AS n FROM feedback WHERE user_id = ? AND created_at >= ?').get(userId, since) as Row;
+    return Number(row.n);
+  }
+
+  listFeedback(limit: number): FeedbackEntry[] {
+    const rows = this.db.prepare('SELECT * FROM feedback ORDER BY created_at DESC LIMIT ?').all(limit) as Row[];
+    return rows.map(toFeedback);
   }
 }

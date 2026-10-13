@@ -3,14 +3,14 @@ import type { AvatarPreset, Equipment, Language, Rules, Units } from '../config.
 import { evaluateAchievements } from '../domain/achievements.ts';
 import { getChapter, getLevel, getRecipe, LEVEL_COUNT, PLANNED_RECIPES, RECIPES, recipeOfLevel } from '../domain/curriculum.ts';
 import type { Level, LevelKind, Recipe } from '../domain/curriculum.ts';
-import { addDays, daysBetween, mondayOf, todayIn, weekLabel } from '../domain/dates.ts';
+import { addDays, daysBetween, mondayOf, todayIn, weekdayIndex, weekLabel } from '../domain/dates.ts';
 import type { LocalDate } from '../domain/dates.ts';
 import { bestStarsOf, chapterSummaries, currentLevel, isDone, isPassed, isUnlocked, levelStatus, pathLevels, recipeUnlocked, skillPassport, totals } from '../domain/progress.ts';
 import { computeStreak, recentWeeks, streakProjectDates } from '../domain/streak.ts';
 import { scoreAttempt } from '../domain/xp.ts';
 import type { StarResult } from '../domain/xp.ts';
 import type { ImageType, MediaStore } from '../store/media.ts';
-import type { CookedEntry, Repository, User } from '../store/repository.ts';
+import type { CookedEntry, FeedbackEntry, Repository, User } from '../store/repository.ts';
 
 export class ServiceError extends Error {
   readonly status: number;
@@ -34,6 +34,12 @@ export interface Image {
   data: Buffer;
 }
 
+/** Passes a stored feedback message on to the team (see feedback.ts). Throws when it didn't arrive. */
+export type FeedbackSink = (entry: FeedbackEntry) => Promise<void>;
+
+/** What the home-screen streak widget shows: a streak going, one that needs a cook this week, or none yet. */
+export type WidgetState = 'on-track' | 'at-risk' | 'new';
+
 const photoUrl = (entryId: string) => `/api/me/cooked/${entryId}/photo`;
 
 const KIND_NAMES: Record<LevelKind, string> = { learn: 'Learn', practice: 'Practice', cook: 'Cook' };
@@ -46,12 +52,14 @@ export class ProfileService {
   private readonly media: MediaStore;
   private readonly rules: Rules;
   private readonly clock: Clock;
+  private readonly feedbackSink: FeedbackSink | null;
 
-  constructor(repo: Repository, media: MediaStore, rules: Rules, clock: Clock = systemClock) {
+  constructor(repo: Repository, media: MediaStore, rules: Rules, clock: Clock = systemClock, feedbackSink: FeedbackSink | null = null) {
     this.repo = repo;
     this.media = media;
     this.rules = rules;
     this.clock = clock;
+    this.feedbackSink = feedbackSink;
   }
 
   private stamp(): string {
@@ -126,6 +134,29 @@ export class ProfileService {
     };
   }
 
+  /**
+   * Compact data for the home-screen widgets (streak and Continue). The numbers hold for
+   * `day` in the user's time zone; the app refreshes the widget after it ends.
+   */
+  widget(user: User) {
+    const { today, result } = this.streak(user);
+    const state: WidgetState = result.thisWeek.status === 'done' ? 'on-track' : result.current > 0 ? 'at-risk' : 'new';
+    const daysLeft = 7 - weekdayIndex(today);
+    const next = currentLevel(this.repo.getProgress(user.id));
+    return {
+      day: today,
+      streak: {
+        current: result.current,
+        state,
+        /** Days left to cook this week, today included (Monday 7, Sunday 1). */
+        daysLeft,
+        message: widgetMessage(state, result.current, daysLeft),
+        weeks: recentWeeks(result, today, 5).map((w) => ({ label: w.label, status: w.status })),
+      },
+      continue: next ? { ...levelRef(next), recipe: next.recipe } : null,
+    };
+  }
+
   /** XP per ISO week for the last `weeks` weeks, oldest first. */
   xpHistory(user: User, weeks: number) {
     const today = this.today(user);
@@ -195,6 +226,45 @@ export class ProfileService {
     return { currentLevel: currentLevel(progress)?.level ?? null, chapters: chapterSummaries(progress), levels: pathLevels(progress) };
   }
 
+  // ── Feedback ───────────────────────────────────────────────────────────────
+
+  /**
+   * "Give feedback" from the app. The message is always stored first; with a webhook
+   * configured it is also passed on right away. A failed hand-over keeps it stored
+   * (forwardedAt stays null) and the user still gets a thank-you.
+   */
+  async sendFeedback(user: User, input: { message: string; screen?: string; appVersion?: string }) {
+    const hourAgo = new Date(this.clock.now().getTime() - 60 * 60 * 1000).toISOString();
+    if (this.repo.countFeedbackSince(user.id, hourAgo) >= this.rules.feedbackPerHour) {
+      throw new ServiceError(429, 'too_much_feedback', 'Thanks for all the feedback! Please wait a little before sending more.');
+    }
+    const entry = this.repo.addFeedback({
+      userId: user.id,
+      displayName: user.displayName,
+      message: input.message,
+      screen: input.screen ?? null,
+      appVersion: input.appVersion ?? null,
+      language: user.language,
+      createdAt: this.stamp(),
+    });
+    let forwarded = false;
+    if (this.feedbackSink) {
+      try {
+        await this.feedbackSink(entry);
+        this.repo.markFeedbackForwarded(entry.id, this.stamp());
+        forwarded = true;
+      } catch (err) {
+        console.error(`Feedback ${entry.id} is stored but did not reach the webhook:`, err instanceof Error ? err.message : err);
+      }
+    }
+    return { id: entry.id, receivedAt: entry.createdAt, forwarded };
+  }
+
+  /** Newest feedback first, for the team (GET /api/admin/feedback). */
+  feedbackList(limit: number) {
+    return { entries: this.repo.listFeedback(limit) };
+  }
+
   // ── Settings and profile picture ───────────────────────────────────────────
 
   settings(user: User) {
@@ -205,7 +275,6 @@ export class ProfileService {
       language: user.language,
       timezone: user.timezone,
       units: user.units,
-      sound: user.sound,
       vibration: user.vibration,
       equipment: this.repo.getEquipment(user.id),
     };
@@ -213,7 +282,7 @@ export class ProfileService {
 
   updateSettings(
     user: User,
-    patch: { displayName?: string; language?: Language; timezone?: string; units?: Units; sound?: boolean; vibration?: boolean; avatarPreset?: AvatarPreset | null; equipment?: Equipment[] },
+    patch: { displayName?: string; language?: Language; timezone?: string; units?: Units; vibration?: boolean; avatarPreset?: AvatarPreset | null; equipment?: Equipment[] },
   ) {
     const { equipment, ...fields } = patch;
     // One profile picture at a time: picking a preset replaces an uploaded photo.
@@ -449,4 +518,12 @@ export function streakMessage(current: number, thisWeek: 'done' | 'open'): strin
   if (current === 0) return thisWeek === 'done' ? 'Week 1 done. Your streak has started!' : 'Cook a new Sizzlo recipe this week to start a streak.';
   if (thisWeek === 'done') return `${current} weeks in a row. This week is covered.`;
   return `Cook a new recipe this week to make it ${current + 1}.`;
+}
+
+/** One line for the streak widget; matches the widget design. */
+export function widgetMessage(state: WidgetState, current: number, daysLeft: number): string {
+  if (state === 'new') return 'Cook a new recipe to start your streak.';
+  if (state === 'on-track') return 'This week is covered. See you next week!';
+  if (daysLeft === 1) return `Last day! Cook a new recipe to make it ${current + 1}.`;
+  return `Cook a new recipe by Sunday to make it ${current + 1}.`;
 }

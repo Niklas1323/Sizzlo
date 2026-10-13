@@ -29,7 +29,8 @@ describe('database', () => {
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((t) => t.name);
     assert.equal(tables.includes('holiday_saves'), false);
     assert.ok(tables.includes('xp_awards') && tables.includes('skills_tried'));
-    assert.deepEqual(['units', 'sound', 'vibration', 'visibility', 'holiday_save_mode'].map((c) => columnsOf(db, 'users').includes(c)), [true, true, true, false, false]);
+    assert.deepEqual(['units', 'sound', 'vibration', 'visibility', 'holiday_save_mode'].map((c) => columnsOf(db, 'users').includes(c)), [true, false, true, false, false]);
+    assert.ok(tables.includes('feedback'));
 
     const repo = new Repository(db);
     seedDemoUser(repo, DEFAULT_RULES, new Date('2026-10-12T08:00:00Z'));
@@ -40,5 +41,21 @@ describe('database', () => {
     const again = openDatabase(path);
     assert.equal(new Repository(again).totalXp(DEMO_USER_ID), 525);
     again.close();
+  });
+
+  test('a version 2 database keeps its data and only loses the Sound setting', () => {
+    const path = join(dir, 'v2.db');
+    const v2 = openDatabase(path);
+    seedDemoUser(new Repository(v2), DEFAULT_RULES, new Date('2026-10-12T08:00:00Z'));
+    v2.exec('DROP TABLE feedback; ALTER TABLE users ADD COLUMN sound INTEGER NOT NULL DEFAULT 1; PRAGMA user_version = 2;');
+    v2.close();
+
+    const db = openDatabase(path);
+    assert.equal(columnsOf(db, 'users').includes('sound'), false);
+    assert.ok(columnsOf(db, 'feedback').includes('forwarded_at'));
+    const repo = new Repository(db);
+    assert.equal(repo.totalXp(DEMO_USER_ID), 525);
+    assert.equal(repo.getUser(DEMO_USER_ID)?.displayName, 'Alex');
+    db.close();
   });
 });

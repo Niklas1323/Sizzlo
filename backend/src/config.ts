@@ -13,6 +13,9 @@ export interface Rules {
   holidaySavesPerYear: number;
   /** How many days back a real cook may be recorded. */
   cookLogBackdateDays: number;
+  /** Longest feedback message, and how many a user may send per hour. */
+  feedbackMaxChars: number;
+  feedbackPerHour: number;
   /** Largest accepted photo upload (recipe photos and profile pictures). */
   maxPhotoBytes: number;
   defaultTimezone: string;
@@ -24,6 +27,8 @@ export const DEFAULT_RULES: Rules = {
   xpForFirstCook: 100,
   holidaySavesPerYear: 4,
   cookLogBackdateDays: 7,
+  feedbackMaxChars: 2000,
+  feedbackPerHour: 10,
   maxPhotoBytes: 5 * 1024 * 1024,
   defaultTimezone: 'Europe/Zurich',
 };

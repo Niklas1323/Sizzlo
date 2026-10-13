@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 /** Raise when the layout changes in a way older data can't follow. */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS users (
   language TEXT NOT NULL DEFAULT 'en',
   timezone TEXT NOT NULL,
   units TEXT NOT NULL DEFAULT 'metric' CHECK (units IN ('metric', 'us')),
-  sound INTEGER NOT NULL DEFAULT 1,
   vibration INTEGER NOT NULL DEFAULT 1,
   is_demo INTEGER NOT NULL DEFAULT 0,
   avatar_file TEXT,
@@ -92,6 +91,21 @@ CREATE TABLE IF NOT EXISTS achievements (
   unlocked_at TEXT NOT NULL,
   PRIMARY KEY (user_id, achievement_id)
 );
+
+-- "Give feedback" from the app. Kept even when the user is deleted; forwarded_at
+-- is set once the message reached the team's webhook (FEEDBACK_WEBHOOK_URL).
+CREATE TABLE IF NOT EXISTS feedback (
+  id TEXT PRIMARY KEY,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  display_name TEXT NOT NULL,
+  message TEXT NOT NULL,
+  screen TEXT,
+  app_version TEXT,
+  language TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  forwarded_at TEXT
+);
+CREATE INDEX IF NOT EXISTS feedback_created ON feedback(created_at);
 `;
 
 /** Opens (and migrates) the database. Pass ":memory:" for tests. */
@@ -107,13 +121,18 @@ export function openDatabase(path: string): DatabaseSync {
 }
 
 /**
- * Databases from before the three-level recipes (Learn, Practice, Cook) hold
- * progress for another level plan and settings that are gone. They only ever
- * held development data, so they are rebuilt empty and the demo is seeded again.
+ * Version 1 databases (before the three-level recipes) hold progress for another
+ * level plan and settings that are gone. They only ever held development data, so
+ * they are rebuilt empty and the demo is seeded again. Version 2 only loses the
+ * Sound setting.
  */
 function migrate(db: DatabaseSync): void {
   const { user_version: version } = db.prepare('PRAGMA user_version').get() as { user_version: number };
   if (version >= SCHEMA_VERSION) return;
+  if (version === 2) {
+    db.exec('ALTER TABLE users DROP COLUMN sound');
+    return;
+  }
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[];
   for (const { name } of tables) db.exec(`DROP TABLE "${name}"`);
 }

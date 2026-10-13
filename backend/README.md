@@ -13,12 +13,14 @@ including a profile picture.
 cd backend
 npm install        # dev tools only
 npm start          # http://localhost:8787, demo user "demo-alex"
-npm test           # 58 tests (rules, store + HTTP API)
+npm test           # 64 tests (rules, store, feedback + HTTP API)
 npm run typecheck
 ```
 
 Environment: `PORT` (8787), `DATA_DIR` (`data`: database and photos),
-`SEED_DEMO` (`true`), `CORS_ORIGIN` (`*`).
+`SEED_DEMO` (`true`), `CORS_ORIGIN` (`*`), `FEEDBACK_WEBHOOK_URL` (unset:
+where "Give feedback" messages are sent, see below), `ADMIN_KEY` (unset: turns
+on the team's feedback list).
 
 ## Rules it enforces
 
@@ -32,10 +34,12 @@ Environment: `PORT` (8787), `DATA_DIR` (`data`: database and photos),
 | Weekly streak | A week counts when the user cooked (or baked) a **new Sizzlo recipe for real** that week: only the first cook of each recipe counts. Cooking a recipe again is always allowed and logged, it just earns no streak credit (`countsForStreak` tells the app which case it is). There is no free "I cooked" button and digital practice never counts. The current week can't break a streak until it is over. |
 | Cook for Real | Opens with the recipe's Cook level, once its Learn and Practice level are done (e.g. Fluffy Pancakes at Level 9). The first cook completes the Cook level. Recording a cook returns where to upload the photo. |
 | Recipe Book photos | One photo per cook, private. The Recipe Book shows the latest photo; the app keeps the recipe illustration as a small badge on it, or shows the illustration alone while there is no photo. JPEG, PNG or WebP, up to 5 MB, checked by content. |
-| Profile picture | Either an uploaded JPEG, PNG or WebP photo or one of 12 illustrated presets (`hat-toss`, `pancake-flip`, `happy-tomato`, `avocado`, `sunny-egg`, `spoony`, `taco-time`, `berry-muffin`, `broccoli`, `strawberry`, `pizza-slice`, `lemon`). One at a time: uploading a photo clears the preset, picking a preset removes the photo. Name, language, units, sound, vibration and kitchen tools are editable. Profiles are always private. |
+| Profile picture | Either an uploaded JPEG, PNG or WebP photo or one of 12 illustrated presets (`hat-toss`, `pancake-flip`, `happy-tomato`, `avocado`, `sunny-egg`, `spoony`, `taco-time`, `berry-muffin`, `broccoli`, `strawberry`, `pizza-slice`, `lemon`). One at a time: uploading a photo clears the preset, picking a preset removes the photo. Name, language, units, vibration and kitchen tools are editable (there is no sound setting). Profiles are always private. |
 | Holiday Saves | 4 per ISO year, spent automatically on a missed week while the year still has one. A save protects the streak but never extends it. |
 | Skill Passport | Per skill: `new` → `understood` (the recipe's Learn level done) → `practiced` (its Practice level has a star) → `tried` (marked when the recipe is cooked for real; the cook may name the skills used). |
 | Cook dates | Up to 7 days back, never a future day. |
+| Feedback | 1–2000 characters, at most 10 messages per user and hour. Always stored first, then posted to `FEEDBACK_WEBHOOK_URL` when it is set; if the webhook fails the message stays stored with `forwardedAt: null`. |
+| Streak widget | `on-track` when this week has a new recipe cooked, `at-risk` when a streak needs one before Sunday, `new` without a streak. `daysLeft` counts today (Monday 7, Sunday 1). |
 
 ### Decisions on open questions (easy to change)
 
@@ -65,9 +69,12 @@ All `/api/me/*` routes need `X-User-Id`. Errors look like
 | GET | `/api/me/streak?weeks=8` | Streak, Holiday Saves and the last N weeks |
 | GET | `/api/me/stats/xp?weeks=7` | XP per week for the statistics chart |
 | GET | `/api/me/achievements` | All achievements with progress |
+| GET | `/api/me/widget` | Home-screen widgets: streak (`current`, `state`, `daysLeft`, `message`, last 5 weeks) and the level to continue. Valid for `day`; refresh the widget after it ends |
+| POST | `/api/me/feedback` | Give feedback `{ message, screen?, appVersion? }` → `{ id, receivedAt, forwarded }` |
+| GET | `/api/admin/feedback?limit=50` | The team's feedback list, newest first. Needs `X-Admin-Key: $ADMIN_KEY`; does not exist while `ADMIN_KEY` is unset |
 | GET | `/api/me/path` | Every level with its status (`locked` / `open` / `done` / `skipped`) and best stars on Practice levels |
 | GET | `/api/me/skill-passport` | All 16 skills with their evidence level and `transfersTo` |
-| GET / PATCH | `/api/me/settings` | `displayName` (1–13 characters), `language` (`en`/`de`), `units` (`metric`/`us`), `sound`, `vibration` (booleans), `timezone`, `avatarPreset` (a preset id or `null`), `equipment[]` (kitchen tools, incl. `spatula` and `kitchen-scale`) |
+| GET / PATCH | `/api/me/settings` | `displayName` (1–13 characters), `language` (`en`/`de`), `units` (`metric`/`us`), `vibration` (boolean), `timezone`, `avatarPreset` (a preset id or `null`), `equipment[]` (kitchen tools, incl. `spatula` and `kitchen-scale`) |
 | PUT / GET / DELETE | `/api/me/avatar` | Profile picture: raw image body with its `Content-Type` |
 | GET | `/api/me/recipe-book` | All 8 recipes with `locked` / `ready` / `cooked`, times cooked, latest photo URL |
 | POST | `/api/me/recipes/:recipeId/cooked` | Cook for Real: `{ cookedOn?, note?, skills?: [id] }` → entry, `photoUploadUrl`, updated streak, new achievements |
@@ -100,13 +107,30 @@ All `/api/me/*` routes need `X-User-Id`. Errors look like
 
 (`chapters`, `weeks` and `latest` are shortened here.)
 
+## Feedback delivery
+
+"Give feedback" must reach a person, so every message is stored in the
+`feedback` table and, when `FEEDBACK_WEBHOOK_URL` is set, posted there as JSON:
+
+```json
+{ "text": "Sizzlo feedback from Alex (settings · v0.9.0 · en):\nThe omelette level is great!",
+  "content": "…same line…",
+  "feedback": { "id": "…", "userId": "demo-alex", "displayName": "Alex", "message": "…", "screen": "settings", "appVersion": "0.9.0", "language": "en", "createdAt": "…" } }
+```
+
+`text` is what a Slack incoming webhook shows and `content` what a Discord
+webhook shows, so either can be pasted in directly; a mail relay or Zapier hook
+can read `feedback`. The team can always read everything with
+`curl -H "X-Admin-Key: $ADMIN_KEY" http://localhost:8787/api/admin/feedback`.
+
 ## Layout
 
 ```
 src/
   config.ts              rules and allowed values
   domain/                pure logic, no I/O: dates, curriculum, xp, streak, progress, achievements
-  service/profileService.ts   use cases (profile, streak, logging, settings)
+  service/profileService.ts   use cases (profile, streak, widget, logging, settings, feedback)
+  service/feedback.ts    posts feedback to the team's webhook
   store/                 SQLite schema, repository, photo storage (local disk)
   http/                  HTTP server, routing, validation
   seed.ts                demo profile used by the designs
