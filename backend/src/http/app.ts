@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { AVATAR_PRESETS, DISPLAY_NAME_MAX, EQUIPMENT, LANGUAGES, UNITS } from '../config.ts';
-import { CHAPTERS, LEVELS, PLANNED_RECIPES, RECIPES, SKILL_IDS } from '../domain/curriculum.ts';
+import { CHAPTERS, LESSONS, LEVELS, PLANNED_RECIPES, RECIPES, SKILL_IDS } from '../domain/curriculum.ts';
 import { isValidTimeZone } from '../domain/dates.ts';
 import type { Image, ProfileService } from '../service/profileService.ts';
 import { ServiceError } from '../service/profileService.ts';
@@ -20,6 +20,7 @@ import {
   optionalString,
   optionalStringList,
   queryInt,
+  requiredScore,
   requiredStars,
   requiredString,
 } from './validate.ts';
@@ -106,7 +107,7 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*', adminKey, 
   const routes: Route[] = [
     route('GET', '/health', () => ({ ok: true })),
 
-    route('GET', '/api/curriculum', () => ({ chapters: CHAPTERS, levels: LEVELS, recipes: RECIPES, plannedRecipes: PLANNED_RECIPES })),
+    route('GET', '/api/curriculum', () => ({ chapters: CHAPTERS, levels: LEVELS, lessons: LESSONS, recipes: RECIPES, plannedRecipes: PLANNED_RECIPES })),
 
     // Development sign-up. Real authentication replaces this (see README).
     route('POST', '/api/users', async (ctx) => {
@@ -122,6 +123,12 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*', adminKey, 
     route('GET', '/api/me/achievements', (ctx) => service.achievements(ctx.user())),
     route('GET', '/api/me/skill-passport', (ctx) => service.skillPassport(ctx.user())),
     route('GET', '/api/me/path', (ctx) => service.path(ctx.user())),
+
+    // Skill refresh: skills fade a little when unused, a 2-minute drill brings them back.
+    route('GET', '/api/me/skills/refresh', (ctx) => service.refresh(ctx.user())),
+    route('POST', '/api/me/skills/:skillId/refresh', async (ctx) =>
+      reply(201, service.refreshSkill(ctx.user(), ctx.params.skillId, requiredScore(await ctx.json()))),
+    ),
 
     // Home-screen widgets: the weekly streak and Continue.
     route('GET', '/api/me/widget', (ctx) => service.widget(ctx.user())),
@@ -162,7 +169,7 @@ export function createApp({ service, maxPhotoBytes, corsOrigin = '*', adminKey, 
     route('GET', '/api/me/avatar', (ctx) => new ImageReply(service.avatar(ctx.user()))),
     route('DELETE', '/api/me/avatar', (ctx) => service.removeAvatar(ctx.user())),
 
-    // Levels: Learn, Practice and Cook for each recipe. Cooking itself is recorded on the recipe below.
+    // Levels: Learn and Practice for each theory lesson and recipe, Cook for each recipe. Cooking itself is recorded on the recipe below.
     route('POST', '/api/me/levels/:level/learn', (ctx) => service.completeLearn(ctx.user(), intParam(ctx.params.level, 'level'))),
     route('POST', '/api/me/levels/:level/attempts', async (ctx) =>
       reply(201, service.recordAttempt(ctx.user(), intParam(ctx.params.level, 'level'), requiredStars(await ctx.json()))),

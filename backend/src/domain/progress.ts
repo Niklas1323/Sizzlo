@@ -1,4 +1,4 @@
-import { CHAPTERS, getLevel, LEVELS, MAX_STARS, RECIPES } from './curriculum.ts';
+import { CHAPTERS, getLevel, LEVELS, MAX_STARS, SKILL_LEVELS, sourceOf } from './curriculum.ts';
 import type { Level } from './curriculum.ts';
 
 /** One user's progress on one level. Which fields are used depends on the level kind. */
@@ -63,7 +63,7 @@ export function levelStatus(progress: ProgressMap, level: number): LevelStatus {
   return isUnlocked(progress, level) ? 'open' : 'locked';
 }
 
-/** Cook for Real opens with the recipe's Cook level, once its Learn and Practice are done. */
+/** Cook for Real opens with the recipe's Cook level, once the level before it is passed. */
 export function recipeUnlocked(progress: ProgressMap, recipe: { levels: { cook: number } }): boolean {
   return isUnlocked(progress, recipe.levels.cook);
 }
@@ -109,35 +109,39 @@ export function chapterSummaries(progress: ProgressMap) {
 }
 
 /**
- * Evidence per skill. Both skills of a recipe share its Learn and Practice level:
- * understood once the Learn level is done, practiced once the Practice level has
- * a star. Tried comes only from a real cook (`tried`: skill id → when).
+ * Evidence per skill. The skills of a theory lesson or recipe share its Learn and
+ * Practice level: understood once the Learn level is done, practiced once the
+ * Practice level has a star (a recipe without a Practice level has no practiced
+ * step). Tried comes only from a real cook (`tried`: skill id → when).
  */
 export function skillPassport(progress: ProgressMap, tried: ReadonlyMap<string, string>) {
-  const skills = RECIPES.flatMap((r) =>
-    r.skills.map((s, i) => {
-      const level = i === 0 ? r.levels.learn : r.levels.practice;
-      const understood = isDone(progress, r.levels.learn);
-      const practiced = isDone(progress, r.levels.practice);
-      const triedAt = tried.get(s.id) ?? null;
-      const status: SkillStatus = triedAt ? 'tried' : practiced ? 'practiced' : understood ? 'understood' : 'new';
-      return {
-        ...s,
-        level,
-        kind: i === 0 ? ('learn' as const) : ('practice' as const),
-        chapter: getLevel(level)?.chapter ?? 0,
-        recipeId: r.id,
-        recipe: r.name,
-        status,
-        understood,
-        practiced,
-        triedForReal: triedAt !== null,
-        triedAt,
-        bestStars: bestStarsOf(progress, r.levels.practice),
-        unlocked: isUnlocked(progress, level),
-      };
-    }),
-  );
+  const skills = SKILL_LEVELS.map((taught) => {
+    const { learn, practice } = sourceOf(taught).levels;
+    const s = taught.skills[0];
+    const understood = isDone(progress, learn);
+    const practiced = practice !== null && isDone(progress, practice);
+    const triedAt = tried.get(s.id) ?? null;
+    const status: SkillStatus = triedAt ? 'tried' : practiced ? 'practiced' : understood ? 'understood' : 'new';
+    return {
+      ...s,
+      level: taught.level,
+      kind: taught.kind as 'learn' | 'practice',
+      chapter: taught.chapter,
+      /** Where it is taught: a theory lesson (lessonId) or a recipe (recipeId). */
+      track: taught.track,
+      lessonId: taught.lessonId,
+      lesson: taught.lesson,
+      recipeId: taught.recipeId,
+      recipe: taught.recipe,
+      status,
+      understood,
+      practiced,
+      triedForReal: triedAt !== null,
+      triedAt,
+      bestStars: practice === null ? null : bestStarsOf(progress, practice),
+      unlocked: isUnlocked(progress, taught.level),
+    };
+  });
   return {
     summary: {
       understood: skills.filter((s) => s.understood).length,

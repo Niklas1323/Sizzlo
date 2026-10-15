@@ -17,6 +17,13 @@ export function requiredStars(body: Body): 1 | 2 | 3 {
   return value;
 }
 
+/** A skill refresh drill's score: 0–3, where 2 or more passes. */
+export function requiredScore(body: Body): 0 | 1 | 2 | 3 {
+  const value = body.score;
+  if (value !== 0 && value !== 1 && value !== 2 && value !== 3) throw new HttpError(400, 'invalid_field', 'score must be 0, 1, 2 or 3.');
+  return value;
+}
+
 export function optionalString(body: Body, key: string, opts: { min?: number; max: number }): string | undefined {
   const value = body[key];
   if (value === undefined || value === null) return undefined;

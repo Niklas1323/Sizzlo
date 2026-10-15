@@ -9,6 +9,8 @@ export interface Rules {
   xpByStars: { 1: number; 2: number; 3: number };
   /** XP the first time a recipe is cooked for real. Cooking it again earns none. */
   xpForFirstCook: number;
+  /** XP for a passed skill refresh (score 2 or more), at most once per skill and day. */
+  xpForRefresh: number;
   /** Holiday Saves per ISO year. A missed week spends one automatically; a save protects the weekly streak but never extends it. */
   holidaySavesPerYear: number;
   /** How many days back a real cook may be recorded. */
@@ -25,6 +27,7 @@ export const DEFAULT_RULES: Rules = {
   xpForLearn: 50,
   xpByStars: { 1: 50, 2: 75, 3: 100 },
   xpForFirstCook: 100,
+  xpForRefresh: 10,
   holidaySavesPerYear: 4,
   cookLogBackdateDays: 7,
   feedbackMaxChars: 2000,

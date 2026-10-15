@@ -1,11 +1,13 @@
 import { DEFAULT_EQUIPMENT } from '../config.ts';
 import type { AvatarPreset, Equipment, Language, Rules, Units } from '../config.ts';
 import { evaluateAchievements } from '../domain/achievements.ts';
-import { getChapter, getLevel, getRecipe, LEVEL_COUNT, PLANNED_RECIPES, RECIPES, recipeOfLevel } from '../domain/curriculum.ts';
+import { cookableSkills, getChapter, getLevel, getRecipe, LEVEL_COUNT, levelOfSkill, PLANNED_RECIPES, RECIPES, recipeLevelNumbers, sourceOf } from '../domain/curriculum.ts';
 import type { Level, LevelKind, Recipe } from '../domain/curriculum.ts';
 import { addDays, daysBetween, mondayOf, todayIn, weekdayIndex, weekLabel } from '../domain/dates.ts';
 import type { LocalDate } from '../domain/dates.ts';
 import { bestStarsOf, chapterSummaries, currentLevel, isDone, isPassed, isUnlocked, levelStatus, pathLevels, recipeUnlocked, skillPassport, totals } from '../domain/progress.ts';
+import { drillFor, PASS_SCORE, refreshSummary, skillRefresh } from '../domain/refresh.ts';
+import type { RefreshScore } from '../domain/refresh.ts';
 import { computeStreak, recentWeeks, streakProjectDates } from '../domain/streak.ts';
 import { scoreAttempt } from '../domain/xp.ts';
 import type { StarResult } from '../domain/xp.ts';
@@ -44,8 +46,8 @@ const photoUrl = (entryId: string) => `/api/me/cooked/${entryId}/photo`;
 
 const KIND_NAMES: Record<LevelKind, string> = { learn: 'Learn', practice: 'Practice', cook: 'Cook' };
 
-/** The short form of a level that responses point to, e.g. the next level after a skip. */
-const levelRef = (l: Level) => ({ level: l.level, kind: l.kind, title: l.title, recipeId: l.recipeId });
+/** The short form of a level that responses point to, e.g. the next level after a skip. A theory level has a lessonId, a recipe level a recipeId. */
+const levelRef = (l: Level) => ({ level: l.level, kind: l.kind, track: l.track, title: l.title, recipeId: l.recipeId, lessonId: l.lessonId });
 
 export class ProfileService {
   private readonly repo: Repository;
@@ -153,7 +155,9 @@ export class ProfileService {
         message: widgetMessage(state, result.current, daysLeft),
         weeks: recentWeeks(result, today, 5).map((w) => ({ label: w.label, status: w.status })),
       },
-      continue: next ? { ...levelRef(next), recipe: next.recipe } : null,
+      continue: next ? { ...levelRef(next), recipe: next.recipe, lesson: next.lesson } : null,
+      /** Skills due for a 2-minute refresh drill. */
+      refreshDue: refreshSummary(this.refreshOf(user).skills).due,
     };
   }
 
@@ -207,11 +211,18 @@ export class ProfileService {
         recipesCooked: new Set(this.repo.cookedDays(user.id).map((d) => d.recipeId)).size,
       },
       currentLevel: next
-        ? { ...levelRef(next), recipe: next.recipe, skills: next.skills, chapter: { chapter: next.chapter, title: getChapter(next.chapter)?.title ?? '' } }
+        ? {
+            ...levelRef(next),
+            recipe: next.recipe,
+            lesson: next.lesson,
+            skills: next.skills,
+            chapter: { chapter: next.chapter, title: getChapter(next.chapter)?.title ?? '' },
+          }
         : null,
       chapters: chapterSummaries(progress),
       streak: this.streakView(user, 8),
       skillPassport: skillPassport(progress, this.repo.triedSkills(user.id)).summary,
+      refresh: refreshSummary(this.refreshOf(user).skills),
       achievements: { earned: ach.earned, total: ach.total, latest },
     };
   }
@@ -224,6 +235,46 @@ export class ProfileService {
   path(user: User) {
     const progress = this.repo.getProgress(user.id);
     return { currentLevel: currentLevel(progress)?.level ?? null, chapters: chapterSummaries(progress), levels: pathLevels(progress) };
+  }
+
+  // ── Skill refresh ──────────────────────────────────────────────────────────
+
+  private refreshOf(user: User) {
+    const localDay = (at: string) => todayIn(user.timezone, new Date(at));
+    const learnt = [...this.repo.getProgress(user.id).values()].filter((p) => p.learnCompletedAt !== null);
+    return skillRefresh({
+      today: this.today(user),
+      learnedOn: new Map(learnt.map((p) => [p.level, localDay(p.learnCompletedAt as string)])),
+      practice: this.repo.practiceResults(user.id),
+      cooked: this.repo.cookedSkills(user.id),
+      refreshes: this.repo.skillRefreshes(user.id),
+    });
+  }
+
+  /** How fresh every started skill is, and up to three that need a drill now. */
+  refresh(user: User) {
+    return this.refreshOf(user);
+  }
+
+  /**
+   * A finished 2-minute drill. A score of 2 or more passes and earns XP once per
+   * skill and day; it never counts for the weekly streak.
+   */
+  refreshSkill(user: User, skillId: string, score: RefreshScore) {
+    const taught = levelOfSkill(skillId);
+    if (!taught) throw new ServiceError(404, 'unknown_skill', 'No skill with this id.');
+    if (!this.refreshOf(user).skills.some((s) => s.id === skillId)) {
+      throw new ServiceError(409, 'skill_not_started', `Finish Level ${sourceOf(taught).levels.learn} to start ${taught.skills[0].name}.`);
+    }
+    const today = this.today(user);
+    const passed = score >= PASS_SCORE && !this.repo.refreshPassedOn(user.id, skillId, today, PASS_SCORE);
+    const xpAwarded = passed ? this.rules.xpForRefresh : 0;
+    this.repo.recordRefresh(user.id, { skillId, score, level: drillFor(taught).level, xp: xpAwarded, on: today, at: this.stamp() });
+    return {
+      skill: this.refreshOf(user).skills.find((s) => s.id === skillId),
+      xpAwarded,
+      totalXp: this.repo.totalXp(user.id),
+    };
   }
 
   // ── Feedback ───────────────────────────────────────────────────────────────
@@ -321,7 +372,15 @@ export class ProfileService {
     this.requirePlayable(user, level, 'learn');
     const xpAwarded = isDone(this.repo.getProgress(user.id), level) ? 0 : this.rules.xpForLearn;
     this.repo.completeLearn(user.id, { level, xp: xpAwarded, on: this.today(user), at: this.stamp() });
-    return { level, understood: true, xpAwarded, totalXp: this.repo.totalXp(user.id), newAchievements: this.syncAchievements(user) };
+    return {
+      level,
+      understood: true,
+      xpAwarded,
+      totalXp: this.repo.totalXp(user.id),
+      // A recipe without a Practice level (Caesar Salad) opens its Cook level right after the Learn level.
+      recipeReady: this.recipeReady(user, level),
+      newAchievements: this.syncAchievements(user),
+    };
   }
 
   recordAttempt(user: User, level: number, stars: StarResult) {
@@ -329,16 +388,23 @@ export class ProfileService {
     const previousBest = bestStarsOf(this.repo.getProgress(user.id), level);
     const score = scoreAttempt(previousBest, stars, this.rules);
     this.repo.recordAttempt(user.id, { level, stars, xpAwarded: score.xpAwarded, bestStars: score.bestStars, playedOn: this.today(user), at: this.stamp() });
-    const recipe = recipeOfLevel(level) as Recipe;
     return {
       level,
       stars,
       ...score,
       totalXp: this.repo.totalXp(user.id),
-      // Practice opens the recipe's Cook level: the app can offer Cook for Real right away, until it was cooked.
-      recipeReady: isDone(this.repo.getProgress(user.id), recipe.levels.cook) ? null : { id: recipe.id, name: recipe.name, cookLevel: recipe.levels.cook },
+      // A recipe's Practice opens its Cook level; a theory lesson's Practice opens no recipe.
+      recipeReady: this.recipeReady(user, level),
       newAchievements: this.syncAchievements(user),
     };
+  }
+
+  /** The recipe whose Cook level comes right after `level`: the app can offer Cook for Real, until it was cooked. */
+  private recipeReady(user: User, level: number) {
+    const next = getLevel(level + 1);
+    const recipe = next?.kind === 'cook' && next.recipeId ? getRecipe(next.recipeId) : undefined;
+    if (!recipe || isDone(this.repo.getProgress(user.id), recipe.levels.cook)) return null;
+    return { id: recipe.id, name: recipe.name, cookLevel: recipe.levels.cook };
   }
 
   /** Cook levels are optional: skipping one passes it and opens the next level. */
@@ -379,13 +445,16 @@ export class ProfileService {
       const mine = entries.filter((e) => e.recipeId === r.id);
       const withPhoto = mine.find((e) => e.photoFile);
       const unlocked = recipeUnlocked(progress, r);
+      const levels = recipeLevelNumbers(r);
       return {
         id: r.id,
         name: r.name,
-        levels: { from: r.levels.learn, to: r.levels.cook, done: Object.values(r.levels).filter((n) => isPassed(progress, n)).length, total: 3 },
+        levels: { from: r.levels.learn, to: r.levels.cook, done: levels.filter((n) => isPassed(progress, n)).length, total: levels.length },
         /** The Cook level: "skipped" still lets the user cook the recipe any time. */
         cookLevel: { level: r.levels.cook, status: levelStatus(progress, r.levels.cook) },
         skills: r.skills,
+        /** Theory lessons it applies; a real cook may mark their skills too. */
+        uses: r.uses,
         kind: r.kind,
         access: r.access,
         recipeStatus: r.recipeStatus,
@@ -408,19 +477,21 @@ export class ProfileService {
 
   /**
    * Cook for Real. Completes the recipe's Cook level (also after a skip), earns
-   * the first-cook XP once per recipe and marks its skills as tried: the ones in
-   * `skills` (the stamps the user picked), or both when none are sent.
+   * the first-cook XP once per recipe and marks skills as tried: the ones in
+   * `skills` (the stamps the user picked: the recipe's own or those of a theory
+   * lesson it applies), or the recipe's own when none are sent.
    */
   cookRecipe(user: User, recipeId: string, input: { cookedOn?: LocalDate; note?: string; skills?: string[] }) {
     const recipe = this.requireRecipe(recipeId);
     const progress = this.repo.getProgress(user.id);
     if (!recipeUnlocked(progress, recipe)) {
-      throw new ServiceError(409, 'recipe_locked', `Finish Levels ${recipe.levels.learn}–${recipe.levels.practice} to cook ${recipe.name} for real.`);
+      const before = recipe.levels.practice === null ? `Level ${recipe.levels.learn}` : `Levels ${recipe.levels.learn}–${recipe.levels.practice}`;
+      throw new ServiceError(409, 'recipe_locked', `Finish ${before} to cook ${recipe.name} for real.`);
     }
-    const own = recipe.skills.map((s) => s.id);
-    const stamped = input.skills ? [...new Set(input.skills)] : own;
-    if (stamped.some((id) => !own.includes(id))) {
-      throw new ServiceError(422, 'skill_not_in_recipe', `${recipe.name} uses these skills: ${own.join(', ')}.`);
+    const allowed = cookableSkills(recipe).map((s) => s.id);
+    const stamped = input.skills ? [...new Set(input.skills)] : recipe.skills.map((s) => s.id);
+    if (stamped.some((id) => !allowed.includes(id))) {
+      throw new ServiceError(422, 'skill_not_in_recipe', `${recipe.name} uses these skills: ${allowed.join(', ')}.`);
     }
     const today = this.today(user);
     const cookedOn = input.cookedOn ?? today;

@@ -101,8 +101,8 @@ const toFeedback = (r: Row): FeedbackEntry => ({
   forwardedAt: optional(r.forwarded_at),
 });
 
-/** Why XP was awarded: the kind of level that earned it. */
-export type XpReason = 'learn' | 'practice' | 'cook';
+/** Why XP was awarded: the kind of level that earned it, or a passed skill refresh. */
+export type XpReason = 'learn' | 'practice' | 'cook' | 'refresh';
 
 export class Repository {
   private readonly db: DatabaseSync;
@@ -199,6 +199,12 @@ export class Repository {
       .run(userId, level, at);
   }
 
+  /** Every Practice result in the order played, for the skill refresh. */
+  practiceResults(userId: string): { level: number; stars: number; on: LocalDate; at: string }[] {
+    const rows = this.db.prepare('SELECT level, stars, played_on, created_at FROM level_attempts WHERE user_id = ? ORDER BY id').all(userId) as Row[];
+    return rows.map((r) => ({ level: Number(r.level), stars: Number(r.stars), on: String(r.played_on), at: String(r.created_at) }));
+  }
+
   /** Every skill a real cook marked as tried: skill id → when it was first tried. */
   triedSkills(userId: string): Map<string, string> {
     const rows = this.db.prepare('SELECT skill_id, tried_at FROM skills_tried WHERE user_id = ?').all(userId) as Row[];
@@ -248,10 +254,48 @@ export class Repository {
         )
         .run(userId, c.level, c.createdAt);
       const tried = this.db.prepare('INSERT OR IGNORE INTO skills_tried (user_id, skill_id, tried_at) VALUES (?, ?, ?)');
-      for (const skillId of c.skillIds) tried.run(userId, skillId, c.createdAt);
+      const used = this.db.prepare('INSERT OR IGNORE INTO cook_skills (cook_id, skill_id) VALUES (?, ?)');
+      for (const skillId of c.skillIds) {
+        tried.run(userId, skillId, c.createdAt);
+        used.run(id, skillId);
+      }
       this.awardXp(userId, { level: c.level, reason: 'cook', xp: c.xp, on: c.cookedOn, at: c.createdAt });
     });
     return this.getCooked(userId, id) as CookedEntry;
+  }
+
+  /** The skills every real cook marked, with the cook's day: each counts as a review of the skill. */
+  cookedSkills(userId: string): { skillId: string; on: LocalDate; at: string }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT s.skill_id, c.cooked_on, c.created_at FROM cook_skills s JOIN cooked_recipes c ON c.id = s.cook_id
+         WHERE c.user_id = ? ORDER BY c.created_at`,
+      )
+      .all(userId) as Row[];
+    return rows.map((r) => ({ skillId: String(r.skill_id), on: String(r.cooked_on), at: String(r.created_at) }));
+  }
+
+  /** A skill refresh drill and, when it earned some, its XP. */
+  recordRefresh(userId: string, r: { skillId: string; score: number; level: number; xp: number; on: LocalDate; at: string }): void {
+    transaction(this.db, () => {
+      this.db
+        .prepare('INSERT INTO skill_reviews (user_id, skill_id, score, reviewed_on, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(userId, r.skillId, r.score, r.on, r.at);
+      this.awardXp(userId, { level: r.level, reason: 'refresh', xp: r.xp, on: r.on, at: r.at });
+    });
+  }
+
+  skillRefreshes(userId: string): { skillId: string; score: number; on: LocalDate; at: string }[] {
+    const rows = this.db.prepare('SELECT skill_id, score, reviewed_on, created_at FROM skill_reviews WHERE user_id = ? ORDER BY id').all(userId) as Row[];
+    return rows.map((r) => ({ skillId: String(r.skill_id), score: Number(r.score), on: String(r.reviewed_on), at: String(r.created_at) }));
+  }
+
+  /** Whether a refresh of the skill already passed (score 2 or more) on that day. */
+  refreshPassedOn(userId: string, skillId: string, day: LocalDate, passScore: number): boolean {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS n FROM skill_reviews WHERE user_id = ? AND skill_id = ? AND reviewed_on = ? AND score >= ?')
+      .get(userId, skillId, day, passScore) as Row;
+    return Number(row.n) > 0;
   }
 
   getCooked(userId: string, id: string): CookedEntry | undefined {
