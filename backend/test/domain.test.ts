@@ -102,7 +102,7 @@ describe('curriculum', () => {
     assert.ok(LEVELS.every((l) => l.chapter === CHAPTERS.find((c) => l.level >= c.from && l.level <= c.to)?.chapter));
     assert.deepEqual(LEVELS.filter((l) => l.access === 'free').map((l) => l.level), Array.from({ length: 17 }, (_, i) => i + 1));
     assert.deepEqual(RECIPES.filter((r) => r.kind === 'bake').map((r) => r.id), ['pizza-twists', 'blueberry-vanilla-muffins']);
-    assert.deepEqual(RECIPES.filter((r) => r.recipeStatus === 'proposed').map((r) => r.id), ['pasta-pomodoro', 'fluffy-rice', 'rainbow-crunch-bowl', 'crispy-wrap', 'caesar-salad']);
+    assert.deepEqual(RECIPES.filter((r) => r.recipeStatus === 'proposed').map((r) => r.id), ['rainbow-crunch-bowl', 'crispy-wrap']);
     assert.equal(MAX_STARS, 30);
   });
 

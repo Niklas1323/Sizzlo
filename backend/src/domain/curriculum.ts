@@ -48,7 +48,7 @@ export interface Recipe {
   /** Baking counts for the streak exactly like cooking; the kind only feeds achievements. */
   kind: 'cook' | 'bake';
   access: Access;
-  /** Proposed recipes are not final yet. */
+  /** Proposed recipes are not final yet; confirmed ones follow a researched, published recipe. */
   recipeStatus: 'confirmed' | 'proposed';
   /**
    * Its Learn, Practice and Cook level. A recipe that teaches only one skill has
@@ -121,7 +121,7 @@ const PLAN: readonly Step[] = [
     ],
   },
   {
-    track: 'recipe', id: 'pasta-pomodoro', name: 'Pasta Pomodoro', kind: 'cook', access: 'free', recipeStatus: 'proposed', uses: ['knife-basics'],
+    track: 'recipe', id: 'pasta-pomodoro', name: 'Pasta Pomodoro', kind: 'cook', access: 'free', recipeStatus: 'confirmed', uses: ['knife-basics'],
     skills: [
       skill('pasta-know-how', 'Pasta Know-How', 'Pasta shapes, salted boiling water, al dente', ['Mac & Cheese', 'Pasta salad', 'Lasagne']),
       skill('simmer-and-season', 'Simmer & Season', 'Simmering a sauce, tasting, pasta water', ['Tomato soup', 'Chili', 'Curry']),
@@ -149,7 +149,7 @@ const PLAN: readonly Step[] = [
     ],
   },
   {
-    track: 'recipe', id: 'fluffy-rice', name: 'Perfect Fluffy Rice', kind: 'cook', access: 'plus', recipeStatus: 'proposed', uses: [],
+    track: 'recipe', id: 'fluffy-rice', name: 'Perfect Fluffy Rice', kind: 'cook', access: 'plus', recipeStatus: 'confirmed', uses: [],
     skills: [
       skill('rice-ratio', 'Rice Ratio', 'Rinsing, water ratio, the absorption method', ['Rice bowls', 'Fried rice', 'Couscous']),
       skill('steam-and-rest', 'Steam & Rest', 'Low heat, lid on, resting', ['Quinoa', 'Pilaf', 'Risotto']),
@@ -171,7 +171,7 @@ const PLAN: readonly Step[] = [
   },
   {
     // One skill, so no Practice level: Cook for Real opens right after the Learn level.
-    track: 'recipe', id: 'caesar-salad', name: 'Caesar Salad', kind: 'cook', access: 'plus', recipeStatus: 'proposed', uses: ['knife-basics'],
+    track: 'recipe', id: 'caesar-salad', name: 'Caesar Salad', kind: 'cook', access: 'plus', recipeStatus: 'confirmed', uses: ['knife-basics'],
     skills: [skill('dressing-science', 'Dressing Science', 'Emulsions, balance, crisp leaves', ['Vinaigrette', 'Coleslaw', 'Potato salad'])],
   },
 ];
